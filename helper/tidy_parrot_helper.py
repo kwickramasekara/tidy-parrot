@@ -42,7 +42,12 @@ def transcribe(model, samples: np.ndarray) -> str:
     if samples.size < model.preprocessor_config.hop_length:
         return ""
     mel = log_mel(mx.array(samples, dtype=mx.float32), model.preprocessor_config)
-    return model.generate(mel)[0].text.strip()
+    try:
+        return model.generate(mel)[0].text.strip()
+    finally:
+        # MLX keeps freed GPU buffers cached up to roughly the GPU working set, and each clip length needs new sizes,
+        # so the idle helper grew by GBs over a session. Clearing per clip measured no slower.
+        mx.clear_cache()
 
 
 def main() -> None:
