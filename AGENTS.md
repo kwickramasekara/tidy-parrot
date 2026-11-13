@@ -12,6 +12,7 @@ Run everything through `make`; `make help` lists every target.
 |---|---|
 | `make setup` | One time: creates the helper venv and downloads the pinned model (~806 MB) |
 | `make build` / `make run` | Builds `build/TidyParrot.app` / also quits the running copy and opens the new one. Add `VERBATIM=1` to keep fillers |
+| `make icon` | Regenerates the committed `app/Resources/AppIcon.icns` from `AppIcon.png`. Run it after changing the artwork |
 | `make test` | Swift unit tests plus Python protocol tests. Fast, and needs no model |
 | `make lint` / `make format` | swift-format with `.swift-format`. Lint is `--strict` |
 | `make integration WAV=clip.wav` | Swift engine against the real helper and model |

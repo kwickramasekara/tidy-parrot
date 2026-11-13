@@ -1,9 +1,9 @@
 # Front door for humans and agents. Swift commands need Xcode's toolchain.
-SWIFT_PATHS := app/Sources app/Tests app/Package.swift
+SWIFT_PATHS := app/Sources app/Tests app/Package.swift scripts/make-icon.swift
 PYTHON := helper/.venv/bin/python
 APP := build/TidyParrot.app
 
-.PHONY: help setup build run test test-swift test-helper integration smoke lint format clean
+.PHONY: help setup build run icon test test-swift test-helper integration smoke lint format clean
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -17,6 +17,9 @@ build: ## Build build/TidyParrot.app; VERBATIM=1 keeps fillers (clean mode off)
 run: build ## Build, quit any running copy, and launch the new one (accepts VERBATIM=1)
 	-pkill -x TidyParrot && sleep 0.5
 	open $(APP)
+
+icon: ## Regenerate app/Resources/AppIcon.icns from app/Resources/AppIcon.png
+	swift scripts/make-icon.swift app/Resources/AppIcon.png app/Resources/AppIcon.icns
 
 test: test-swift test-helper ## All fast tests (no model needed)
 

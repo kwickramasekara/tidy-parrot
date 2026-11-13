@@ -21,8 +21,9 @@ swift build -c release --package-path "$ROOT/app"
 BIN="$(swift build -c release --package-path "$ROOT/app" --show-bin-path)/TidyParrot"
 
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/TidyParrot"
+cp "$ROOT/app/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 cp "$ROOT/app/Resources/Info.plist" "$PLIST"
 
 # The app finds the helper through these absolute paths, so moving the project folder needs a rebuild.
