@@ -1,0 +1,196 @@
+import Foundation
+
+public struct DictationSettings: Sendable {
+    /// Shorter holds are treated as accidental taps.
+    public var minimumClipDuration: TimeInterval = 0.25
+    /// Stops a recording whose key release was missed (a password field hides key events from global monitors),
+    /// so the mic can't stay open indefinitely.
+    public var maximumClipDuration: Duration = .seconds(120)
+    /// Appended to each dictation so consecutive ones don't run together ("Friday.Please").
+    public var trailingText = " "
+
+    public init() {}
+}
+
+/// The dictation pipeline: hotkey → recorder → engine → text inserter. Owns all app state and reports it as an
+/// `AppStatus`; knows nothing about AppKit, so every collaborator can be swapped for a fake in tests.
+@MainActor
+public final class DictationController {
+    public struct Dependencies {
+        public var hotkey: any HotkeySource
+        public var recorder: any AudioRecording
+        public var engine: any TranscriptionEngine
+        public var inserter: any TextInserting
+        public var permissions: any PermissionsProviding
+        /// Audible feedback for refused or failed dictations.
+        public var alert: @MainActor () -> Void
+
+        public init(
+            hotkey: any HotkeySource, recorder: any AudioRecording, engine: any TranscriptionEngine,
+            inserter: any TextInserting, permissions: any PermissionsProviding, alert: @escaping @MainActor () -> Void
+        ) {
+            self.hotkey = hotkey
+            self.recorder = recorder
+            self.engine = engine
+            self.inserter = inserter
+            self.permissions = permissions
+            self.alert = alert
+        }
+    }
+
+    public var onStatusChange: ((AppStatus) -> Void)?
+    /// The outcome of the last dictation, e.g. its timing or an error.
+    public var onMessage: ((String) -> Void)?
+
+    private let deps: Dependencies
+    private let settings: DictationSettings
+    private var engineState = EngineState.loading
+    private var hasAccessibility = false
+    private var inFlight = 0
+    private var recordingLimit: Task<Void, Never>?
+
+    public init(dependencies: Dependencies, settings: DictationSettings = DictationSettings()) {
+        deps = dependencies
+        self.settings = settings
+    }
+
+    public var status: AppStatus {
+        if !hasAccessibility { return .needsAccessibility }
+        if deps.recorder.isRecording { return .listening }
+        if inFlight > 0 { return .transcribing }
+        switch engineState {
+        case .loading: return .loading
+        case .ready(let cleanMode): return .ready(cleanMode: cleanMode)
+        case .failed(let reason): return .failed(reason)
+        }
+    }
+
+    public func start() {
+        deps.engine.onStateChange = { [weak self] state in
+            self?.engineState = state
+            self?.publishStatus()
+        }
+        deps.engine.start()
+        deps.permissions.requestMicrophoneAccess()
+        startHotkey()
+        publishStatus()
+    }
+
+    public func stop() {
+        cancelRecording()
+        deps.engine.stop()
+    }
+
+    public func restartEngine() {
+        deps.engine.restart()
+    }
+
+    // MARK: Hotkey → record → transcribe → insert
+
+    private func startHotkey() {
+        deps.hotkey.onEvent = { [weak self] event in self?.handle(event) }
+        hasAccessibility = deps.permissions.promptForAccessibility()
+        if hasAccessibility {
+            deps.hotkey.start()
+            return
+        }
+        Log.write("waiting for Accessibility permission")
+        deps.permissions.waitForAccessibility { [weak self] in
+            guard let self else { return }
+            Log.write("Accessibility permission granted")
+            hasAccessibility = true
+            deps.hotkey.start()
+            publishStatus()
+        }
+    }
+
+    func handle(_ event: HotkeyEvent) {
+        switch event {
+        case .press: startRecording()
+        case .release: finishRecording()
+        case .cancel: cancelRecording()
+        }
+    }
+
+    private func startRecording() {
+        guard !deps.recorder.isRecording else { return }
+        guard case .ready = engineState else {
+            deps.alert()
+            return
+        }
+        guard deps.permissions.isMicrophoneAuthorized else {
+            fail("Microphone access is off: System Settings → Privacy & Security → Microphone")
+            return
+        }
+        do {
+            try deps.recorder.start()
+        } catch {
+            fail("Mic error: \(error.localizedDescription)")
+            return
+        }
+        let limit = settings.maximumClipDuration
+        recordingLimit = Task { [weak self] in
+            try? await Task.sleep(for: limit)
+            guard !Task.isCancelled else { return }
+            self?.finishRecording()
+        }
+        publishStatus()
+    }
+
+    /// Returns the transcription task, so tests can await it.
+    @discardableResult
+    func finishRecording() -> Task<Void, Never>? {
+        guard deps.recorder.isRecording else { return nil }
+        recordingLimit?.cancel()
+        let clip = deps.recorder.stop()
+        guard clip.duration >= settings.minimumClipDuration else {
+            publishStatus()
+            return nil
+        }
+
+        inFlight += 1
+        publishStatus()
+        return Task { [weak self, engine = deps.engine] in
+            let result: Result<Transcript, Error>
+            do {
+                result = .success(try await engine.transcribe(clip))
+            } catch {
+                result = .failure(error)
+            }
+            self?.complete(result, clip: clip)
+        }
+    }
+
+    private func complete(_ result: Result<Transcript, Error>, clip: AudioClip) {
+        inFlight -= 1
+        switch result {
+        case .success(let transcript):
+            Log.write(
+                String(
+                    format: "%.1fs audio -> %d chars in %d ms", clip.duration, transcript.text.count,
+                    transcript.milliseconds))
+            onMessage?(String(format: "Last: %.1fs of audio in %d ms", clip.duration, transcript.milliseconds))
+            if !transcript.text.isEmpty { deps.inserter.insert(transcript.text + settings.trailingText) }
+        case .failure(let error):
+            fail("Error: \(error.localizedDescription)")
+        }
+        publishStatus()
+    }
+
+    private func cancelRecording() {
+        guard deps.recorder.isRecording else { return }
+        recordingLimit?.cancel()
+        deps.recorder.cancel()
+        publishStatus()
+    }
+
+    private func fail(_ message: String) {
+        Log.write(message)
+        onMessage?(message)
+        deps.alert()
+    }
+
+    private func publishStatus() {
+        onStatusChange?(status)
+    }
+}

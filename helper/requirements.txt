@@ -1,0 +1,6 @@
+# Pinned: vendor/fluid_speech_mlx.py patches parakeet-mlx internals, so upgrades can break it silently.
+parakeet-mlx==0.7.0
+mlx==0.32.4
+mlx-metal==0.32.4
+huggingface_hub==2.4.0
+numpy==2.5.4

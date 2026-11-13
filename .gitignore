@@ -1,0 +1,11 @@
+# Python helper: local venv and the ~800 MB model from make setup
+helper/.venv/
+helper/model/
+__pycache__/
+
+# Build outputs
+app/.build/
+app/.swiftpm/
+build/
+
+.DS_Store

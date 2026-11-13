@@ -1,0 +1,82 @@
+# Tidy Parrot
+
+Hold **Right ⌥**, speak, release: the text is pasted into whatever field has focus, with "um"s, "uh"s and
+stutters removed.
+
+A small menu-bar app in Swift, plus a Python helper that keeps
+[Fluid Speech Pro (MLX)](https://huggingface.co/FluidVoice-Labs/fluid-speech-pro-mlx) loaded with clean mode on.
+
+## Setup
+
+Requires an Apple Silicon Mac on macOS 15 or later, Xcode, and Python 3.
+
+```bash
+make setup          # Python venv + pinned model download (~806 MB, into helper/model)
+make run            # builds and opens build/TidyParrot.app (make build-verbatim keeps fillers)
+```
+
+`make help` lists everything else (tests, lint, format). The model is pinned to the revision
+`helper/vendor/fluid_speech_mlx.py` was taken from, and loaded from `helper/model` with no network access at runtime.
+To update, bump `MODEL_REVISION` in `scripts/setup.sh` and re-download the loader from the same revision.
+
+The build writes the helper's absolute paths into the app, so rebuild after moving this folder.
+
+On first launch macOS asks for two permissions:
+
+- **Microphone:** to record while you hold the key. If it's off, the menu says so when you press the key.
+- **Accessibility:** to see the hotkey and paste. Turn on Tidy Parrot under System Settings → Privacy & Security →
+  Accessibility. The app checks every second and starts the hotkey once it's allowed. This hasn't been tested yet;
+  if the hotkey doesn't work, quit and reopen the app.
+
+The app is signed ad hoc, so **after each rebuild** macOS may silently stop honoring the Accessibility grant. If the
+menu bar shows a warning triangle, remove Tidy Parrot from that list with "−", then add it again.
+
+## How it works
+
+```
+Right ⌥ down ─► AVAudioEngine (fresh each time, mic open only while held)
+Right ⌥ up   ─► resample to 16 kHz mono ─► helper over stdin ─► text over stdout
+             ─► clipboard + ⌘V ─► your clipboard restored 0.5 s later
+```
+
+- `app/`: Swift package. `TidyParrotCore` holds the app logic: a `DictationController` running hotkey → recorder →
+  engine → paste, with each step behind a small protocol. `TidyParrot` is the executable that launches it.
+  Pressing another key during the hold (e.g. ⌥E) cancels the recording. Recordings stop after 2 minutes in case the
+  key release is missed, since password fields hide key events from other apps.
+- `helper/`: `tidy_parrot_helper.py` loads the 8-bit model with clean mode once and warms it up, then answers one
+  clip at a time over the protocol in `wire_protocol.py`. If the app quits or crashes, the helper's stdin closes and
+  it exits. `vendor/fluid_speech_mlx.py` is FluidVoice's loader from the model repo, unmodified.
+
+See [AGENTS.md](AGENTS.md) for the full architecture, conventions and where to add features.
+
+Menu bar icon: 🐦 ready · 🎤 listening · ⋯ transcribing · ⌛ loading · ⚠︎ needs attention.
+Logs: `~/Library/Logs/TidyParrot.log` (timings only, never the text), or **Open Log** in the menu.
+
+## Measured on an M4 Pro
+
+| | |
+|---|---|
+| Model load and warm-up | ~0.25–0.6 s (about 4 s the very first time, from a cold disk) |
+| 4 s clip | 53–65 ms |
+| 7 s clip | 76–123 ms |
+
+## Testing
+
+```bash
+make test                                   # Swift + Python unit tests, no model needed
+make integration WAV=some.wav               # Swift engine against the real helper and model
+make smoke WAV=some.wav                     # the helper alone, over the app's protocol
+helper/.venv/bin/python helper/tidy_parrot_helper.py --file some.wav [--verbatim]
+```
+
+## Known limits
+
+- Clean mode removes fillers and most repeats. In testing it dropped "um", "uh" and "I I" but kept
+  "we should we should".
+- Paste uses key code 9 (V on QWERTY). Other keyboard layouts may need a different code.
+- Recordings stop at 2 minutes and aren't split into chunks. Untested past a minute or so.
+- `parakeet-mlx` is pinned, because the vendored loader patches its internals.
+
+## Credits
+
+Fluid Speech Pro by FluidVoice, CC BY 4.0. Built on NVIDIA Parakeet TDT 0.6B v3 and Moondream Parakeet Ultra.
