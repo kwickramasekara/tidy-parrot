@@ -1,6 +1,6 @@
 import Foundation
 
-public enum HotkeyEvent: Equatable, Sendable {
+enum HotkeyEvent: Equatable, Sendable {
     case press
     case release
     /// Another key was pressed during the hold, e.g. ⌥E for an accent, so this wasn't dictation.
@@ -8,19 +8,19 @@ public enum HotkeyEvent: Equatable, Sendable {
 }
 
 /// A single modifier key used for hold-to-talk, identified by its side-specific device mask.
-public struct ModifierKey: Equatable, Sendable {
-    public let keyCode: UInt16
+struct ModifierKey: Equatable, Sendable {
+    let keyCode: UInt16
     /// NX_DEVICE*KEYMASK bit for this key, which tells left and right modifiers apart.
-    public let deviceMask: UInt
-    public let displayName: String
+    let deviceMask: UInt
+    let displayName: String
 
-    public static let rightOption = ModifierKey(keyCode: 61, deviceMask: 0x40, displayName: "Right ⌥")
+    static let rightOption = ModifierKey(keyCode: 61, deviceMask: 0x40, displayName: "Right ⌥")
 }
 
 /// Hold-to-talk logic, kept free of NSEvent so it can be tested directly.
 struct HoldToTalkDetector {
     let key: ModifierKey
-    private(set) var isHeld = false
+    private var isHeld = false
 
     init(key: ModifierKey) {
         self.key = key

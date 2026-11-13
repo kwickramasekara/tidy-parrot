@@ -1,7 +1,7 @@
 import Foundation
 
 /// What the app is doing, in priority order: a missing permission outranks everything else.
-public enum AppStatus: Equatable, Sendable {
+enum AppStatus: Equatable, Sendable {
     case needsAccessibility
     case listening
     case transcribing
@@ -10,7 +10,7 @@ public enum AppStatus: Equatable, Sendable {
     case failed(String)
 
     /// SF Symbol and one-line description for the menu bar.
-    public func presentation(hotkey: ModifierKey) -> (symbol: String, text: String) {
+    func presentation(hotkey: ModifierKey) -> (symbol: String, text: String) {
         switch self {
         case .needsAccessibility:
             ("exclamationmark.triangle", "Needs Accessibility permission: System Settings → Privacy & Security")

@@ -2,7 +2,7 @@ import AVFoundation
 import Synchronization
 
 @MainActor
-public protocol AudioRecording: AnyObject {
+protocol AudioRecording: AnyObject {
     var isRecording: Bool { get }
     func start() throws
     /// Stops recording and returns the clip, already converted to `AudioClip.sampleRate`.
@@ -14,16 +14,14 @@ public protocol AudioRecording: AnyObject {
 /// A fresh engine per recording means device changes between dictations (a Teams call switching mics,
 /// AirPods connecting) never touch a long-lived engine, and the mic is closed the rest of the time.
 @MainActor
-public final class MicrophoneRecorder: AudioRecording {
+final class MicrophoneRecorder: AudioRecording {
     private var engine: AVAudioEngine?
     private var inputSampleRate: Double = 0
     private let buffer = SampleBuffer()
 
-    public init() {}
+    var isRecording: Bool { engine != nil }
 
-    public var isRecording: Bool { engine != nil }
-
-    public func start() throws {
+    func start() throws {
         let engine = AVAudioEngine()
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
@@ -37,12 +35,12 @@ public final class MicrophoneRecorder: AudioRecording {
         self.engine = engine
     }
 
-    public func stop() -> AudioClip {
+    func stop() -> AudioClip {
         guard stopEngine() else { return AudioClip(samples: []) }
         return AudioClip(samples: Resampler.resample(buffer.drain(), from: inputSampleRate))
     }
 
-    public func cancel() {
+    func cancel() {
         stopEngine()
     }
 
@@ -86,8 +84,8 @@ final class SampleBuffer: Sendable {
     }
 }
 
-public enum RecorderError: LocalizedError {
+enum RecorderError: LocalizedError {
     case noInput
 
-    public var errorDescription: String? { "No microphone input available" }
+    var errorDescription: String? { "No microphone input available" }
 }

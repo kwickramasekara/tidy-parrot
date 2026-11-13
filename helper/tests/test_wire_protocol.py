@@ -6,7 +6,7 @@ import unittest
 
 import numpy as np
 
-from wire_protocol import read_clip, serve
+from wire_protocol import read_payload, serve, write_reply
 
 
 def frame(samples) -> bytes:
@@ -20,22 +20,29 @@ def run_serve(stdin_bytes: bytes, transcribe):
     return [json.loads(line) for line in out.getvalue().splitlines()], logs
 
 
-class ReadClipTests(unittest.TestCase):
-    def test_round_trips_samples(self):
-        clip = read_clip(io.BytesIO(frame([0.5, -1.0, 0.25])))
-        np.testing.assert_array_equal(clip, np.array([0.5, -1.0, 0.25], dtype=np.float32))
+class ReadPayloadTests(unittest.TestCase):
+    def test_returns_exactly_the_framed_bytes(self):
+        stream = io.BytesIO(frame([0.5, -1.0]) + frame([0.25]))
+        self.assertEqual(read_payload(stream), np.array([0.5, -1.0], dtype="<f4").tobytes())
+        self.assertEqual(read_payload(stream), np.array([0.25], dtype="<f4").tobytes())
 
-    def test_empty_clip_is_an_empty_array_not_eof(self):
-        clip = read_clip(io.BytesIO(frame([])))
-        self.assertIsNotNone(clip)
-        self.assertEqual(clip.size, 0)
+    def test_empty_clip_is_empty_bytes_not_eof(self):
+        self.assertEqual(read_payload(io.BytesIO(frame([]))), b"")
 
     def test_eof_before_header(self):
-        self.assertIsNone(read_clip(io.BytesIO(b"")))
+        self.assertIsNone(read_payload(io.BytesIO(b"")))
 
     def test_truncated_header_or_payload_is_eof(self):
-        self.assertIsNone(read_clip(io.BytesIO(b"\x08\x00")))
-        self.assertIsNone(read_clip(io.BytesIO(frame([1.0, 2.0])[:-1])))
+        self.assertIsNone(read_payload(io.BytesIO(b"\x08\x00")))
+        self.assertIsNone(read_payload(io.BytesIO(frame([1.0, 2.0])[:-1])))
+
+
+class WriteReplyTests(unittest.TestCase):
+    def test_one_json_object_per_line(self):
+        out = io.StringIO()
+        write_reply(out, {"text": 'say "hi"\nthere', "ms": 3})
+        self.assertEqual(out.getvalue().count("\n"), 1)
+        self.assertEqual(json.loads(out.getvalue()), {"text": 'say "hi"\nthere', "ms": 3})
 
 
 class ServeTests(unittest.TestCase):
@@ -53,6 +60,12 @@ class ServeTests(unittest.TestCase):
         replies, logs = run_serve(frame([0.0]) + frame([0.0, 0.0]), flaky)
         self.assertEqual(replies, [{"error": "boom"}, {"text": "ok", "ms": replies[1]["ms"]}])
         self.assertTrue(any("boom" in line for line in logs))
+
+    def test_malformed_payload_gets_an_error_and_serving_continues(self):
+        bad = struct.pack("<I", 3) + b"abc"  # not a whole number of float32s
+        replies, _ = run_serve(bad + frame([0.0, 0.0]), lambda s: f"{s.size} samples")
+        self.assertIn("error", replies[0])
+        self.assertEqual(replies[1]["text"], "2 samples")
 
     def test_exits_cleanly_when_stdin_closes(self):
         replies, logs = run_serve(b"", lambda s: "unused")

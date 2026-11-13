@@ -9,15 +9,14 @@ struct DictationControllerTests {
     let engine = FakeEngine()
     let inserter = FakeInserter()
     let permissions = FakePermissions()
-    var alerts = AlertCounter()
+    let alerts = AlertCounter()
 
     final class AlertCounter {
         var count = 0
     }
 
     func makeController(settings: DictationSettings = DictationSettings()) -> DictationController {
-        let alerts = alerts
-        return DictationController(
+        DictationController(
             dependencies: .init(
                 hotkey: hotkey, recorder: recorder, engine: engine, inserter: inserter, permissions: permissions,
                 alert: { alerts.count += 1 }),
@@ -190,10 +189,23 @@ struct DictationControllerTests {
         settings.maximumClipDuration = .milliseconds(20)
         let controller = makeReadyController(settings: settings)
         hotkey.send(.press)
-        try await Task.sleep(for: .milliseconds(300))
+        try await waitUntil { engine.received.count == 1 }
         #expect(!recorder.isRecording)
-        #expect(engine.received.count == 1)
-        _ = controller
+        #expect(controller.status == .ready(cleanMode: true))
+    }
+
+    @Test func engineFailingMidRecordingReportsErrorOnRelease() async {
+        engine.result = .failure(TranscriptionError.notRunning)
+        let controller = makeReadyController()
+        var messages: [String] = []
+        controller.onMessage = { messages.append($0) }
+        hotkey.send(.press)
+        engine.emit(.failed("Helper stopped (status 1)"))
+        #expect(controller.status == .listening)  // the mic stays visibly open until release
+
+        await controller.finishRecording()?.value
+        #expect(messages == ["Error: Transcription helper isn't running"])
+        #expect(controller.status == .failed("Helper stopped (status 1)"))
     }
 
     @Test func stopClosesMicAndStopsEngine() {

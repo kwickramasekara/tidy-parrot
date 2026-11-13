@@ -1,10 +1,10 @@
 import Foundation
+import Testing
 
 @testable import TidyParrotCore
 
 @MainActor
 final class FakeHotkey: HotkeySource {
-    let key = ModifierKey.rightOption
     var onEvent: ((HotkeyEvent) -> Void)?
     private(set) var started = false
 
@@ -84,4 +84,17 @@ final class FakePermissions: PermissionsProviding {
 
 struct FakeError: LocalizedError {
     var errorDescription: String? { "fake failure" }
+}
+
+/// Polls instead of sleeping a fixed time, so timing tests pass as soon as they can and fail only on a real hang.
+@MainActor
+func waitUntil(timeout: Duration = .seconds(2), _ condition: () -> Bool) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while !condition() {
+        guard ContinuousClock.now < deadline else {
+            Issue.record("condition not met within \(timeout)")
+            return
+        }
+        try await Task.sleep(for: .milliseconds(5))
+    }
 }

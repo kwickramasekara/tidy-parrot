@@ -13,7 +13,7 @@ struct HelperIntegrationTests {
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent()
 
-    @Test func transcribesARealClipInOrder() async throws {
+    @Test func transcribesARealClip() async throws {
         let wav = try #require(ProcessInfo.processInfo.environment["TP_INTEGRATION_WAV"])
         let clip = try Self.loadClip(URL(fileURLWithPath: wav))
         let engine = HelperProcessEngine(
@@ -25,7 +25,7 @@ struct HelperIntegrationTests {
         let ready = await Self.waitForReadyOrFailure(engine)
         #expect(ready == .ready(cleanMode: true))
 
-        // Two requests in flight at once must come back in order, matched to the right clip.
+        // Two requests in flight at once: each reply must match its own clip.
         async let speech = engine.transcribe(clip)
         async let silence = engine.transcribe(AudioClip(samples: []))
         let (speechText, silenceText) = try await (speech.text, silence.text)

@@ -1,8 +1,7 @@
 import AppKit
 
 @MainActor
-public protocol HotkeySource: AnyObject {
-    var key: ModifierKey { get }
+protocol HotkeySource: AnyObject {
     var onEvent: ((HotkeyEvent) -> Void)? { get set }
     /// Only call once the app is trusted for Accessibility: monitors added earlier never receive events.
     func start()
@@ -10,18 +9,17 @@ public protocol HotkeySource: AnyObject {
 
 /// Watches the hotkey system-wide with NSEvent monitors.
 @MainActor
-public final class GlobalHotkeyMonitor: HotkeySource {
-    public var onEvent: ((HotkeyEvent) -> Void)?
-    public var key: ModifierKey { detector.key }
+final class GlobalHotkeyMonitor: HotkeySource {
+    var onEvent: ((HotkeyEvent) -> Void)?
 
     private var detector: HoldToTalkDetector
     private var monitors: [Any] = []
 
-    public init(key: ModifierKey) {
+    init(key: ModifierKey) {
         detector = HoldToTalkDetector(key: key)
     }
 
-    public func start() {
+    func start() {
         guard monitors.isEmpty else { return }
         let events: NSEvent.EventTypeMask = [.flagsChanged, .keyDown]
         if let global = NSEvent.addGlobalMonitorForEvents(

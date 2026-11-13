@@ -12,7 +12,7 @@ Requires an Apple Silicon Mac on macOS 15 or later, Xcode, and Python 3.
 
 ```bash
 make setup          # Python venv + pinned model download (~806 MB, into helper/model)
-make run            # builds and opens build/TidyParrot.app (make build-verbatim keeps fillers)
+make run            # builds and opens build/TidyParrot.app (make run VERBATIM=1 keeps fillers)
 ```
 
 `make help` lists everything else (tests, lint, format). The model is pinned to the revision

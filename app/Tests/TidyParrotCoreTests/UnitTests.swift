@@ -23,7 +23,7 @@ struct HelperProtocolTests {
         ),
         (#"{"text": "Hi there.", "ms": 61}"#, .transcript(Transcript(text: "Hi there.", milliseconds: 61))),
         (#"{"error": "model not found"}"#, .error("model not found")),
-        (#"{}"#, .transcript(Transcript(text: "", milliseconds: 0))),
+        (#"{"text": ""}"#, .transcript(Transcript(text: "", milliseconds: 0))),
     ])
     func decodesMessages(line: String, expected: HelperProtocol.Message) {
         #expect(HelperProtocol.decode(line) == expected)
@@ -33,7 +33,7 @@ struct HelperProtocolTests {
         #expect(HelperProtocol.decode(#"{"text": "x", "error": "bad"}"#) == .error("bad"))
     }
 
-    @Test(arguments: ["", "not json", "[1, 2]"])
+    @Test(arguments: ["", "not json", "[1, 2]", "{}", #"{"ms": 5}"#])
     func rejectsGarbage(line: String) {
         #expect(HelperProtocol.decode(line) == nil)
     }
@@ -91,23 +91,23 @@ struct ResamplerTests {
     }
 }
 
-struct AppConfigurationTests {
+struct HelperConfigurationTests {
     @Test func readsHelperKeys() {
         let info: [String: Any] = [
             "TPHelperPython": "/py", "TPHelperScript": "/helper.py", "TPHelperArguments": ["--verbatim"],
         ]
         #expect(
-            AppConfiguration.helper(from: info)
+            HelperProcessEngine.Configuration(infoDictionary: info)
                 == .init(python: "/py", script: "/helper.py", arguments: ["--verbatim"]))
     }
 
     @Test func argumentsAreOptional() {
         let info: [String: Any] = ["TPHelperPython": "/py", "TPHelperScript": "/helper.py"]
-        #expect(AppConfiguration.helper(from: info)?.arguments == [])
+        #expect(HelperProcessEngine.Configuration(infoDictionary: info)?.arguments == [])
     }
 
     @Test func missingPathsGiveNil() {
-        #expect(AppConfiguration.helper(from: ["TPHelperPython": "/py"]) == nil)
+        #expect(HelperProcessEngine.Configuration(infoDictionary: ["TPHelperPython": "/py"]) == nil)
     }
 }
 
@@ -126,13 +126,12 @@ struct AppStatusTests {
 
 @MainActor
 struct UnavailableEngineTests {
-    @Test func reportsFailureOnStartAndRestart() async {
+    @Test func reportsFailureOnStart() async {
         let engine = UnavailableEngine(reason: "no config")
         var states: [EngineState] = []
         engine.onStateChange = { states.append($0) }
         engine.start()
-        engine.restart()
-        #expect(states == [.failed("no config"), .failed("no config")])
+        #expect(states == [.failed("no config")])
         await #expect(throws: TranscriptionError.notRunning) {
             try await engine.transcribe(AudioClip(samples: []))
         }

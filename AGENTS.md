@@ -11,7 +11,7 @@ Run everything through `make`; `make help` lists every target.
 | Command | What it does |
 |---|---|
 | `make setup` | One time: creates the helper venv and downloads the pinned model (~806 MB) |
-| `make build` / `make run` | Builds `build/TidyParrot.app` / builds and opens it |
+| `make build` / `make run` | Builds `build/TidyParrot.app` / also quits the running copy and opens the new one. Add `VERBATIM=1` to keep fillers |
 | `make test` | Swift unit tests plus Python protocol tests. Fast, and needs no model |
 | `make lint` / `make format` | swift-format with `.swift-format`. Lint is `--strict` |
 | `make integration WAV=clip.wav` | Swift engine against the real helper and model |
@@ -36,12 +36,12 @@ GlobalHotkeyMonitor ─press/release/cancel─► DictationController ─► Mic
 - **`app/Sources/TidyParrot/main.swift`**: starts `NSApplication`. Nothing else goes here.
 - **`app/Sources/TidyParrotCore/`**: all app code, in one folder per concern:
   - `App/`: `AppDelegate` is the **composition root**, the only place that creates live implementations.
-    `AppConfiguration` reads the build-time keys from Info.plist.
   - `Dictation/`: `DictationController` owns all state and runs the pipeline. `DictationSettings` holds its tunables.
     `AppStatus` is the derived status and its menu text.
   - `Audio/`: `AudioRecording` protocol, `MicrophoneRecorder`, `Resampler`, and `AudioClip` (mono float32 at 16 kHz).
   - `Transcription/`: `TranscriptionEngine` protocol and `HelperProcessEngine`, the Python subprocess. Also
-    `HelperProtocol`, the wire format, and `UnavailableEngine`, a stand-in used when the helper isn't configured.
+    `HelperProtocol`, the wire format, and `UnavailableEngine`, a stand-in used when the Info.plist keys from
+    `scripts/build.sh` are missing.
   - `Input/`: `HotkeySource` protocol, `GlobalHotkeyMonitor` (NSEvent), and `HoldToTalkDetector`, the hold logic.
   - `Output/`: `TextInserting` protocol and `PasteboardTextInserter`.
   - `Permissions/`: `PermissionsProviding` protocol and `SystemPermissions` (microphone and Accessibility).
@@ -77,16 +77,22 @@ When stdin closes, the helper exits. The helper writes logs to stderr, which goe
     isolation, and it traps when Core Audio calls it on the audio thread.
   - Avoid `@unchecked Sendable`. If you can't, explain why it's safe in a `// Safety:` comment, as in
     `HelperConnection`.
-- **Dependency injection by initializer.** Every system boundary (hotkey, mic, engine, paste, permissions, alert
-  sound) is a small protocol in `DictationController.Dependencies`. Tests use the fakes in `Tests/.../Fakes.swift`.
-  Don't reach for singletons or `shared` from inside the core.
+- **Dependency injection by initializer.** Every system boundary reaches `DictationController` through
+  `Dependencies`: hotkey, mic, engine, paste and permissions as small protocols, and the alert sound as a closure.
+  Tests use the fakes in `Tests/.../Fakes.swift`. Don't reach for singletons or `shared` from inside the core. `Log`
+  is the one deliberate exception: a file append, and tests may write to the real log.
+- **Internal by default.** Only `AppDelegate` is `public`, because `main.swift` is in another module. Tests use
+  `@testable import`.
 - **Keep protocols small.** Add a method only when a caller needs it. Extend an existing type rather than adding a
   parallel one that does the same job.
 - **Keep logic pure where you can.** `HoldToTalkDetector`, `HelperProtocol`, `AppStatus.presentation` and
-  `AppConfiguration` have no side effects and get table-style tests. Follow that pattern for new logic.
+  `HelperProcessEngine.Configuration(infoDictionary:)` have no side effects and get table-style tests. Follow that
+  pattern for new logic.
 - **Testing:**
   - Use Swift Testing (`import Testing`, `@Test`, `#expect`), not XCTest.
   - Test failure and refusal paths as well as the happy path.
+  - Wait for a condition with `waitUntil`. Use a fixed sleep only to show that something *doesn't* happen. Never touch the user's clipboard, keyboard or focused
+    app from a test: `PasteboardTextInserterTests` uses a private pasteboard and a fake ⌘V.
   - Python tests use stdlib `unittest`, so no new dependencies.
 - **Privacy:**
   - Never log or persist transcribed text; log timings and states only.

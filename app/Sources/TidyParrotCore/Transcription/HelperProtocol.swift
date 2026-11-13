@@ -45,6 +45,7 @@ enum HelperProtocol {
         if parsed.ready == true {
             return .ready(loadMilliseconds: parsed.loadMs ?? 0, cleanMode: parsed.cleanMode ?? false)
         }
-        return .transcript(Transcript(text: parsed.text ?? "", milliseconds: parsed.ms ?? 0))
+        guard let text = parsed.text else { return nil }
+        return .transcript(Transcript(text: text, milliseconds: parsed.ms ?? 0))
     }
 }

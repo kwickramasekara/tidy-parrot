@@ -18,20 +18,29 @@ struct HelperProcessEngineTests {
     }
 
     @Test func startupErrorIsReportedInsteadOfExitStatus() async throws {
-        let engine = try Self.engine(running: #"echo '{"error": "model not found"}'; exit 1"#)
+        let engine = Self.engine(running: #"echo '{"error": "model not found"}'; exit 1"#)
         #expect(await Self.firstSettledState(of: engine) == .failed("model not found"))
         // The exit that follows must not replace the helper's own message.
+        var later: [EngineState] = []
+        engine.onStateChange = { later.append($0) }
         try await Task.sleep(for: .milliseconds(200))
+        #expect(later.isEmpty)
         await #expect(throws: TranscriptionError.notRunning) { try await engine.transcribe(AudioClip(samples: [])) }
     }
 
-    @Test func silentExitReportsStatus() async throws {
-        let engine = try Self.engine(running: "exit 3")
+    @Test func unexpectedStartupLineFailsInsteadOfHangingInLoading() async {
+        // The script would wait forever on stdin; failing must also end it.
+        let engine = Self.engine(running: "echo 'Loading weights...'; cat >/dev/null")
+        #expect(await Self.firstSettledState(of: engine) == .failed("Helper started with an unexpected reply"))
+    }
+
+    @Test func silentExitReportsStatus() async {
+        let engine = Self.engine(running: "exit 3")
         #expect(await Self.firstSettledState(of: engine) == .failed("Helper stopped (status 3)"))
     }
 
-    @Test func helperDyingMidRequestFailsTheRequest() async throws {
-        let engine = try Self.engine(
+    @Test func helperDyingMidRequestFailsTheRequest() async {
+        let engine = Self.engine(
             running: #"echo '{"ready": true, "load_ms": 1, "clean_mode": false}'; head -c 4 >/dev/null"#)
         #expect(await Self.firstSettledState(of: engine) == .ready(cleanMode: false))
         await #expect(throws: TranscriptionError.notRunning) {
@@ -40,7 +49,7 @@ struct HelperProcessEngineTests {
     }
 
     @Test func stopIsQuiet() async throws {
-        let engine = try Self.engine(running: #"echo '{"ready": true}'; cat >/dev/null"#)
+        let engine = Self.engine(running: #"echo '{"ready": true}'; cat >/dev/null"#)
         #expect(await Self.firstSettledState(of: engine) == .ready(cleanMode: false))
         var later: [EngineState] = []
         engine.onStateChange = { later.append($0) }
@@ -49,10 +58,9 @@ struct HelperProcessEngineTests {
         #expect(later.isEmpty)  // a deliberate stop isn't reported as a failure
     }
 
-    private static func engine(running script: String) throws -> HelperProcessEngine {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("tp-helper-\(UUID().uuidString).sh")
-        try script.write(to: url, atomically: true, encoding: .utf8)
-        return HelperProcessEngine(configuration: .init(python: "/bin/sh", script: url.path, arguments: []))
+    /// `sh -c script` stands in for `python helper.py`, so no temp files are needed.
+    private static func engine(running script: String) -> HelperProcessEngine {
+        HelperProcessEngine(configuration: .init(python: "/bin/sh", script: "-c", arguments: [script]))
     }
 
     private static func firstSettledState(of engine: HelperProcessEngine) async -> EngineState {

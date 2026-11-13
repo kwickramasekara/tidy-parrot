@@ -9,7 +9,8 @@ The Swift side lives in app/Sources/TidyParrotCore/Transcription/HelperProtocol.
 import json
 import struct
 import time
-from typing import BinaryIO, Callable, Optional, TextIO
+from collections.abc import Callable
+from typing import BinaryIO, TextIO
 
 import numpy as np
 
@@ -20,7 +21,7 @@ Transcribe = Callable[[np.ndarray], str]
 Log = Callable[[str], None]
 
 
-def read_exact(stream: BinaryIO, n: int) -> Optional[bytes]:
+def read_exact(stream: BinaryIO, n: int) -> bytes | None:
     """Returns None if the stream ends first."""
     buf = bytearray()
     while len(buf) < n:
@@ -31,15 +32,12 @@ def read_exact(stream: BinaryIO, n: int) -> Optional[bytes]:
     return bytes(buf)
 
 
-def read_clip(stream: BinaryIO) -> Optional[np.ndarray]:
-    """Next clip as float32 samples, or None when the app has closed stdin."""
+def read_payload(stream: BinaryIO) -> bytes | None:
+    """Next clip's raw bytes, or None when the app has closed stdin."""
     header = read_exact(stream, HEADER.size)
     if header is None:
         return None
-    payload = read_exact(stream, HEADER.unpack(header)[0])
-    if payload is None:
-        return None
-    return np.frombuffer(payload, dtype="<f4")
+    return read_exact(stream, HEADER.unpack(header)[0])
 
 
 def write_reply(out: TextIO, obj: dict) -> None:
@@ -49,8 +47,10 @@ def write_reply(out: TextIO, obj: dict) -> None:
 
 def serve(stdin: BinaryIO, out: TextIO, transcribe: Transcribe, log: Log) -> None:
     """Answers clips one at a time until stdin closes (the app quit or crashed)."""
-    while (samples := read_clip(stdin)) is not None:
+    while (payload := read_payload(stdin)) is not None:
         try:
+            # Inside the try: a malformed payload (length not a multiple of 4) is one bad clip, not a reason to exit.
+            samples = np.frombuffer(payload, dtype="<f4")
             start = time.perf_counter()
             text = transcribe(samples)
             ms = round((time.perf_counter() - start) * 1000)

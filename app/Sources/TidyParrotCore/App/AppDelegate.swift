@@ -42,7 +42,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private static func makeEngine() -> any TranscriptionEngine {
-        guard let configuration = AppConfiguration.helper(from: Bundle.main.infoDictionary ?? [:]) else {
+        guard let configuration = HelperProcessEngine.Configuration(infoDictionary: Bundle.main.infoDictionary ?? [:])
+        else {
             return UnavailableEngine(reason: "Helper paths missing from Info.plist; rebuild with make build")
         }
         return HelperProcessEngine(configuration: configuration)

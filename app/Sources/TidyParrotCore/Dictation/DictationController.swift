@@ -1,46 +1,32 @@
 import Foundation
 
-public struct DictationSettings: Sendable {
+struct DictationSettings: Sendable {
     /// Shorter holds are treated as accidental taps.
-    public var minimumClipDuration: TimeInterval = 0.25
+    var minimumClipDuration: TimeInterval = 0.25
     /// Stops a recording whose key release was missed (a password field hides key events from global monitors),
     /// so the mic can't stay open indefinitely.
-    public var maximumClipDuration: Duration = .seconds(120)
+    var maximumClipDuration: Duration = .seconds(120)
     /// Appended to each dictation so consecutive ones don't run together ("Friday.Please").
-    public var trailingText = " "
-
-    public init() {}
+    var trailingText = " "
 }
 
 /// The dictation pipeline: hotkey → recorder → engine → text inserter. Owns all app state and reports it as an
 /// `AppStatus`; knows nothing about AppKit, so every collaborator can be swapped for a fake in tests.
 @MainActor
-public final class DictationController {
-    public struct Dependencies {
-        public var hotkey: any HotkeySource
-        public var recorder: any AudioRecording
-        public var engine: any TranscriptionEngine
-        public var inserter: any TextInserting
-        public var permissions: any PermissionsProviding
+final class DictationController {
+    struct Dependencies {
+        var hotkey: any HotkeySource
+        var recorder: any AudioRecording
+        var engine: any TranscriptionEngine
+        var inserter: any TextInserting
+        var permissions: any PermissionsProviding
         /// Audible feedback for refused or failed dictations.
-        public var alert: @MainActor () -> Void
-
-        public init(
-            hotkey: any HotkeySource, recorder: any AudioRecording, engine: any TranscriptionEngine,
-            inserter: any TextInserting, permissions: any PermissionsProviding, alert: @escaping @MainActor () -> Void
-        ) {
-            self.hotkey = hotkey
-            self.recorder = recorder
-            self.engine = engine
-            self.inserter = inserter
-            self.permissions = permissions
-            self.alert = alert
-        }
+        var alert: @MainActor () -> Void
     }
 
-    public var onStatusChange: ((AppStatus) -> Void)?
+    var onStatusChange: ((AppStatus) -> Void)?
     /// The outcome of the last dictation, e.g. its timing or an error.
-    public var onMessage: ((String) -> Void)?
+    var onMessage: ((String) -> Void)?
 
     private let deps: Dependencies
     private let settings: DictationSettings
@@ -49,12 +35,12 @@ public final class DictationController {
     private var inFlight = 0
     private var recordingLimit: Task<Void, Never>?
 
-    public init(dependencies: Dependencies, settings: DictationSettings = DictationSettings()) {
+    init(dependencies: Dependencies, settings: DictationSettings = DictationSettings()) {
         deps = dependencies
         self.settings = settings
     }
 
-    public var status: AppStatus {
+    var status: AppStatus {
         if !hasAccessibility { return .needsAccessibility }
         if deps.recorder.isRecording { return .listening }
         if inFlight > 0 { return .transcribing }
@@ -65,7 +51,7 @@ public final class DictationController {
         }
     }
 
-    public func start() {
+    func start() {
         deps.engine.onStateChange = { [weak self] state in
             self?.engineState = state
             self?.publishStatus()
@@ -76,13 +62,14 @@ public final class DictationController {
         publishStatus()
     }
 
-    public func stop() {
+    func stop() {
         cancelRecording()
         deps.engine.stop()
     }
 
-    public func restartEngine() {
-        deps.engine.restart()
+    func restartEngine() {
+        deps.engine.stop()
+        deps.engine.start()
     }
 
     // MARK: Hotkey → record → transcribe → insert
@@ -104,7 +91,7 @@ public final class DictationController {
         }
     }
 
-    func handle(_ event: HotkeyEvent) {
+    private func handle(_ event: HotkeyEvent) {
         switch event {
         case .press: startRecording()
         case .release: finishRecording()

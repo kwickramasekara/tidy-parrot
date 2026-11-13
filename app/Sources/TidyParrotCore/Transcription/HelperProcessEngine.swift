@@ -2,30 +2,24 @@ import Foundation
 
 /// Runs helper/tidy_parrot_helper.py, which keeps the model loaded, and talks to it over `HelperProtocol`.
 @MainActor
-public final class HelperProcessEngine: TranscriptionEngine {
-    public struct Configuration: Sendable, Equatable {
-        public let python: String
-        public let script: String
-        public let arguments: [String]
-
-        public init(python: String, script: String, arguments: [String]) {
-            self.python = python
-            self.script = script
-            self.arguments = arguments
-        }
+final class HelperProcessEngine: TranscriptionEngine {
+    struct Configuration: Sendable, Equatable {
+        let python: String
+        let script: String
+        let arguments: [String]
     }
 
-    public var onStateChange: ((EngineState) -> Void)?
+    var onStateChange: ((EngineState) -> Void)?
 
     private let configuration: Configuration
     private var connection: HelperConnection?
 
-    public init(configuration: Configuration) {
+    init(configuration: Configuration) {
         self.configuration = configuration
         signal(SIGPIPE, SIG_IGN)  // a dead helper must surface as a write error, not kill the app
     }
 
-    public func start() {
+    func start() {
         onStateChange?(.loading)
 
         let process = Process()
@@ -47,9 +41,7 @@ public final class HelperProcessEngine: TranscriptionEngine {
         do {
             try process.run()
         } catch {
-            let reason = "Couldn't start helper: \(error.localizedDescription)"
-            Log.write(reason)
-            onStateChange?(.failed(reason))
+            fail("Couldn't start helper: \(error.localizedDescription)")
             return
         }
         Log.write("helper started (pid \(process.processIdentifier))")
@@ -57,20 +49,17 @@ public final class HelperProcessEngine: TranscriptionEngine {
         let connection = HelperConnection(
             process: process, input: stdin.fileHandleForWriting, output: stdout.fileHandleForReading)
         self.connection = connection
-        connection.readMessage { [weak self] message in
-            Task { @MainActor in self?.handleFirstMessage(message, from: connection) }
+        connection.readLine { [weak self] line in
+            Task { @MainActor in self?.handleFirstLine(line, from: connection) }
         }
     }
 
-    public func stop() {
-        guard let connection else { return }
-        detach()
-        connection.close()  // EOF makes the helper exit on its own
+    func stop() {
+        disconnect()
     }
 
-    public func transcribe(_ clip: AudioClip) async throws -> Transcript {
+    func transcribe(_ clip: AudioClip) async throws -> Transcript {
         guard let connection else { throw TranscriptionError.notRunning }
-        // The body runs synchronously on the main actor, so requests reach the serial queue in call order.
         let message = try await withCheckedThrowingContinuation { continuation in
             connection.send(HelperProtocol.frame(clip)) { continuation.resume(with: $0) }
         }
@@ -81,20 +70,18 @@ public final class HelperProcessEngine: TranscriptionEngine {
         }
     }
 
-    private func handleFirstMessage(_ message: HelperProtocol.Message?, from started: HelperConnection) {
-        guard started === connection else { return }  // replaced or stopped meanwhile
-        switch message {
+    /// `line` is nil when the helper exited without writing anything; `handleExit` reports that.
+    private func handleFirstLine(_ line: String?, from started: HelperConnection) {
+        guard let line, started === connection else { return }  // replaced or stopped meanwhile
+        switch HelperProtocol.decode(line) {
         case .ready(let loadMilliseconds, let cleanMode):
             Log.write("helper ready in \(loadMilliseconds) ms, clean mode \(cleanMode)")
             onStateChange?(.ready(cleanMode: cleanMode))
         case .error(let text):
-            // e.g. model missing. Detach so the exit that follows doesn't replace this with a bare status code.
-            Log.write(text)
-            detach()
-            onStateChange?(.failed(text))
+            // e.g. model missing. Disconnect first so the exit that follows doesn't replace this with a status code.
+            fail(text)
         case .transcript, nil:
-            // Nothing usable: the helper died before replying, and handleExit reports it.
-            break
+            fail("Helper started with an unexpected reply")
         }
     }
 
@@ -102,13 +89,18 @@ public final class HelperProcessEngine: TranscriptionEngine {
         Log.write("helper exited with status \(status)")
         // Ignore exits of a process we already replaced, stopped on purpose, or reported.
         guard connection?.processIdentifier == pid else { return }
-        detach()
-        let reason = "Helper stopped (status \(status))"
+        fail("Helper stopped (status \(status))")
+    }
+
+    private func fail(_ reason: String) {
         Log.write(reason)
+        disconnect()
         onStateChange?(.failed(reason))
     }
 
-    private func detach() {
+    /// Forgets the helper, so its later replies and exit are ignored, and makes sure it ends.
+    private func disconnect() {
+        connection?.close()  // EOF makes the helper exit on its own
         connection = nil
     }
 }
@@ -116,8 +108,7 @@ public final class HelperProcessEngine: TranscriptionEngine {
 /// The running helper's pipes. Blocking I/O happens on `queue`, one request at a time, matching the helper's
 /// one-clip-in, one-line-out loop.
 private final class HelperConnection: @unchecked Sendable {
-    // Safety: `reader` is used and `input` written only on `queue`. `close()` may race a write, which then fails
-    // with EPIPE and surfaces as an error, the same as the helper dying mid-request.
+    // Safety: `input` and `reader` are used only on `queue`; the rest is immutable or thread-safe (`Process`).
     let processIdentifier: Int32
     private let process: Process
     private let input: FileHandle
@@ -131,10 +122,10 @@ private final class HelperConnection: @unchecked Sendable {
         self.reader = LineReader(output)
     }
 
-    /// Reads one line without sending anything; used for the startup message. Nil at EOF or on a bad line.
-    func readMessage(_ completion: @escaping @Sendable (HelperProtocol.Message?) -> Void) {
+    /// Reads one line without sending anything; used for the startup message. Nil at EOF.
+    func readLine(_ completion: @escaping @Sendable (String?) -> Void) {
         queue.async { [self] in
-            completion(reader.readLine().flatMap(HelperProtocol.decode))
+            completion(reader.readLine())
         }
     }
 
@@ -150,8 +141,20 @@ private final class HelperConnection: @unchecked Sendable {
         }
     }
 
+    /// Ends the helper. The pipe closes after any request in progress, which terminating the helper cuts short.
     func close() {
-        try? input.close()
+        queue.async { [self] in try? input.close() }
         if process.isRunning { process.terminate() }
+    }
+}
+
+extension HelperProcessEngine.Configuration {
+    /// Reads the keys scripts/build.sh writes into Info.plist. They hold absolute paths, so moving the project folder
+    /// needs a rebuild. Nil if they're missing.
+    init?(infoDictionary info: [String: Any]) {
+        guard let python = info["TPHelperPython"] as? String, let script = info["TPHelperScript"] as? String else {
+            return nil
+        }
+        self.init(python: python, script: script, arguments: info["TPHelperArguments"] as? [String] ?? [])
     }
 }

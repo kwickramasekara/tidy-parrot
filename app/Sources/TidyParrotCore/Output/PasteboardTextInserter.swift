@@ -1,24 +1,36 @@
 import AppKit
 
 @MainActor
-public protocol TextInserting {
+protocol TextInserting {
     func insert(_ text: String)
 }
 
 /// Puts text into the focused field by pasting: works in nearly every app, unlike setting the field through
 /// the Accessibility API. The user's clipboard is put back afterwards.
 @MainActor
-public struct PasteboardTextInserter: TextInserting {
+final class PasteboardTextInserter: TextInserting {
+    private let pasteboard: NSPasteboard
+    private let paste: @MainActor () -> Void
     /// How long the target app gets to read the clipboard before it's restored.
-    private static let restoreDelay: Duration = .milliseconds(500)
-    /// V on QWERTY. Other layouts may need a different code.
-    private static let vKeyCode: CGKeyCode = 9
+    private let restoreDelay: Duration
+    /// The user's clipboard and the change count of our dictation, while a restore is pending.
+    private var pending: (saved: [NSPasteboardItem], ourChange: Int)?
+    private var restoreTask: Task<Void, Never>?
 
-    public init() {}
+    init(
+        pasteboard: NSPasteboard = .general, restoreDelay: Duration = .milliseconds(500),
+        paste: @escaping @MainActor () -> Void = PasteboardTextInserter.postCommandV
+    ) {
+        self.pasteboard = pasteboard
+        self.restoreDelay = restoreDelay
+        self.paste = paste
+    }
 
-    public func insert(_ text: String) {
-        let pasteboard = NSPasteboard.general
-        let saved = Self.snapshot(pasteboard)
+    func insert(_ text: String) {
+        // During a pending restore the clipboard holds our previous dictation, not the user's content, unless they
+        // copied something since.
+        let saved =
+            if let pending, pending.ourChange == pasteboard.changeCount { pending.saved } else { snapshot() }
 
         let item = NSPasteboardItem()
         item.setString(text, forType: .string)
@@ -26,20 +38,28 @@ public struct PasteboardTextInserter: TextInserting {
         item.setString("", forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType"))
         pasteboard.clearContents()
         pasteboard.writeObjects([item])
-        let ourChange = pasteboard.changeCount
+        pending = (saved, pasteboard.changeCount)
 
-        Self.postCommandV()
+        paste()
 
-        Task { @MainActor in
-            try? await Task.sleep(for: Self.restoreDelay)
-            // If something else was copied meanwhile, leave it alone.
-            guard pasteboard.changeCount == ourChange else { return }
-            pasteboard.clearContents()
-            if !saved.isEmpty { pasteboard.writeObjects(saved) }
+        restoreTask?.cancel()
+        restoreTask = Task { [weak self, restoreDelay] in
+            try? await Task.sleep(for: restoreDelay)
+            guard !Task.isCancelled else { return }
+            self?.restore()
         }
     }
 
-    private static func snapshot(_ pasteboard: NSPasteboard) -> [NSPasteboardItem] {
+    private func restore() {
+        guard let pending else { return }
+        self.pending = nil
+        // If something else was copied meanwhile, leave it alone.
+        guard pasteboard.changeCount == pending.ourChange else { return }
+        pasteboard.clearContents()
+        if !pending.saved.isEmpty { pasteboard.writeObjects(pending.saved) }
+    }
+
+    private func snapshot() -> [NSPasteboardItem] {
         (pasteboard.pasteboardItems ?? []).map { original in
             let copy = NSPasteboardItem()
             for type in original.types {
@@ -50,6 +70,8 @@ public struct PasteboardTextInserter: TextInserting {
     }
 
     private static func postCommandV() {
+        /// V on QWERTY. Other layouts may need a different code.
+        let vKeyCode: CGKeyCode = 9
         let source = CGEventSource(stateID: .combinedSessionState)
         for keyDown in [true, false] {
             let event = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: keyDown)

@@ -2,7 +2,7 @@ import AVFoundation
 @preconcurrency import ApplicationServices  // kAXTrustedCheckOptionPrompt is an unannotated global var
 
 @MainActor
-public protocol PermissionsProviding {
+protocol PermissionsProviding {
     /// A denied mic records silence rather than failing, so check this before recording.
     var isMicrophoneAuthorized: Bool { get }
     func requestMicrophoneAccess()
@@ -13,23 +13,21 @@ public protocol PermissionsProviding {
 }
 
 @MainActor
-public struct SystemPermissions: PermissionsProviding {
-    public init() {}
-
-    public var isMicrophoneAuthorized: Bool {
+struct SystemPermissions: PermissionsProviding {
+    var isMicrophoneAuthorized: Bool {
         AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
 
-    public func requestMicrophoneAccess() {
+    func requestMicrophoneAccess() {
         AVCaptureDevice.requestAccess(for: .audio) { _ in }
     }
 
-    public func promptForAccessibility() -> Bool {
+    func promptForAccessibility() -> Bool {
         let prompt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         return AXIsProcessTrustedWithOptions(prompt)
     }
 
-    public func waitForAccessibility(_ granted: @escaping @MainActor () -> Void) {
+    func waitForAccessibility(_ granted: @escaping @MainActor () -> Void) {
         // There's no notification for this grant, so poll.
         Task { @MainActor in
             while !AXIsProcessTrusted() {
