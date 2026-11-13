@@ -39,38 +39,51 @@ struct HelperProtocolTests {
     }
 }
 
-struct HoldToTalkDetectorTests {
-    let key = ModifierKey.rightOption
-
-    @Test func pressThenRelease() {
-        var detector = HoldToTalkDetector(key: key)
-        #expect(detector.flagsChanged(keyCode: 61, modifierFlags: 0x80040) == .press)
-        #expect(detector.flagsChanged(keyCode: 61, modifierFlags: 0x80040) == nil)  // repeat while held
-        #expect(detector.flagsChanged(keyCode: 61, modifierFlags: 0) == .release)
-        #expect(detector.flagsChanged(keyCode: 61, modifierFlags: 0) == nil)
+struct TapToToggleDetectorTests {
+    enum Input: Sendable {
+        case fnDown, fnUp
+        case flags(keyCode: UInt16, modifierFlags: UInt)
+        case key(UInt16)
     }
 
-    @Test func leftOptionIsIgnored() {
-        var detector = HoldToTalkDetector(key: key)
-        // Left ⌥ has key code 58 and device mask 0x20.
-        #expect(detector.flagsChanged(keyCode: 58, modifierFlags: 0x80020) == nil)
-        // Right ⌥ released while left ⌥ is still down: the right-side bit is clear, so it's a release.
-        #expect(detector.flagsChanged(keyCode: 61, modifierFlags: 0x80060) == .press)
-        #expect(detector.flagsChanged(keyCode: 61, modifierFlags: 0x80020) == .release)
-    }
+    static let fnFlag: UInt = 0x80_0000
+    static let escape: UInt16 = 53
 
-    @Test func otherKeyDuringHoldCancelsOnce() {
-        var detector = HoldToTalkDetector(key: key)
-        _ = detector.flagsChanged(keyCode: 61, modifierFlags: 0x80040)
-        #expect(detector.keyDown() == .cancel)
-        #expect(detector.keyDown() == nil)
-        // The eventual key-up of ⌥ isn't a release, since the hold was cancelled.
-        #expect(detector.flagsChanged(keyCode: 61, modifierFlags: 0) == nil)
-    }
-
-    @Test func keyDownWithoutHoldIsIgnored() {
-        var detector = HoldToTalkDetector(key: key)
-        #expect(detector.keyDown() == nil)
+    /// Each row feeds a key sequence to a fresh detector and lists the event expected after each input.
+    @Test(
+        arguments: [
+            // A plain tap toggles on release; a repeated flags event while held does nothing.
+            ([.fnDown, .fnDown, .fnUp, .fnUp], [nil, nil, .toggle, nil]),
+            // Every later tap toggles again.
+            ([.fnDown, .fnUp, .fnDown, .fnUp], [nil, .toggle, nil, .toggle]),
+            // fn+← is a shortcut, not a tap, and it doesn't spoil the next tap.
+            ([.fnDown, .key(123), .fnUp, .fnDown, .fnUp], [nil, nil, nil, nil, .toggle]),
+            // Left ⌘ pressed and released while fn is held.
+            (
+                [
+                    .fnDown, .flags(keyCode: 55, modifierFlags: fnFlag | 0x10_0008),
+                    .flags(keyCode: 55, modifierFlags: fnFlag), .fnUp,
+                ],
+                [nil, nil, nil, nil]
+            ),
+            // Right ⌥, the old hotkey, does nothing.
+            ([.flags(keyCode: 61, modifierFlags: 0x8_0040), .flags(keyCode: 61, modifierFlags: 0)], [nil, nil]),
+            // Esc cancels; other keys don't.
+            ([.key(escape), .key(0)], [.cancel, nil]),
+            // fn+Esc is a shortcut, not a cancel.
+            ([.fnDown, .key(escape), .fnUp], [nil, nil, nil]),
+        ] as [([Input], [HotkeyEvent?])])
+    func detects(inputs: [Input], expected: [HotkeyEvent?]) {
+        var detector = TapToToggleDetector(key: .function)
+        let events = inputs.map { input in
+            switch input {
+            case .fnDown: detector.flagsChanged(keyCode: 63, modifierFlags: Self.fnFlag)
+            case .fnUp: detector.flagsChanged(keyCode: 63, modifierFlags: 0)
+            case .flags(let keyCode, let flags): detector.flagsChanged(keyCode: keyCode, modifierFlags: flags)
+            case .key(let keyCode): detector.keyDown(keyCode: keyCode)
+            }
+        }
+        #expect(events == expected)
     }
 }
 
@@ -113,14 +126,19 @@ struct HelperConfigurationTests {
 
 struct AppStatusTests {
     @Test func readyMentionsHotkeyAndCleanMode() {
-        let (symbol, text) = AppStatus.ready(cleanMode: true).presentation(hotkey: .rightOption)
+        let (symbol, text) = AppStatus.ready(cleanMode: true).presentation(hotkey: .function)
         #expect(symbol == "bird")
-        #expect(text == "Ready: hold Right ⌥ to dictate (clean mode)")
-        #expect(!AppStatus.ready(cleanMode: false).presentation(hotkey: .rightOption).text.contains("clean"))
+        #expect(text == "Ready: tap fn to dictate (clean mode)")
+        #expect(!AppStatus.ready(cleanMode: false).presentation(hotkey: .function).text.contains("clean"))
+    }
+
+    @Test func listeningExplainsHowToStopAndCancel() {
+        let text = AppStatus.listening.presentation(hotkey: .function).text
+        #expect(text == "Listening… tap fn to insert, Esc to cancel")
     }
 
     @Test func failureShowsReason() {
-        #expect(AppStatus.failed("Helper stopped").presentation(hotkey: .rightOption).text == "Helper stopped")
+        #expect(AppStatus.failed("Helper stopped").presentation(hotkey: .function).text == "Helper stopped")
     }
 }
 

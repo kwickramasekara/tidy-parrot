@@ -3,7 +3,7 @@ import AppKit
 /// Composition root: builds the live collaborators, connects the controller to the menu, and nothing else.
 @MainActor
 public final class AppDelegate: NSObject, NSApplicationDelegate {
-    private static let hotkey = ModifierKey.rightOption
+    private static let hotkey = ModifierKey.function
 
     private var controller: DictationController?
     private var menu: StatusMenu?
@@ -22,7 +22,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
                 engine: Self.makeEngine(),
                 inserter: PasteboardTextInserter(),
                 permissions: SystemPermissions(),
-                alert: { NSSound.beep() }
+                play: SystemSounds.play
             ))
         let menu = StatusMenu(
             hotkey: Self.hotkey,

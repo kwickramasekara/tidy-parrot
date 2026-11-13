@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guide for coding agents working on Tidy Parrot. It's a macOS menu-bar app: hold Right ⌥, speak, release, and the
+Guide for coding agents working on Tidy Parrot. It's a macOS menu-bar app: tap fn, speak, tap fn again, and the
 text is pasted into the focused field. Speech-to-text runs locally. The app is Swift (`app/`), and the model runs in a
 Python + MLX helper process (`helper/`). [README.md](README.md) is the user-facing doc.
 
@@ -28,7 +28,7 @@ the Swift commands outside your sandbox.
 ## Architecture
 
 ```
-GlobalHotkeyMonitor ─press/release/cancel─► DictationController ─► MicrophoneRecorder  (AVAudioEngine → 16 kHz clip)
+GlobalHotkeyMonitor ─toggle/cancel────────► DictationController ─► MicrophoneRecorder  (AVAudioEngine → 16 kHz clip)
                                                    │              ─► TranscriptionEngine (HelperProcessEngine ⇄ Python)
                                                    │              ─► PasteboardTextInserter (clipboard + ⌘V, then restore)
                                                    └─ AppStatus / messages ─► StatusMenu
@@ -43,8 +43,9 @@ GlobalHotkeyMonitor ─press/release/cancel─► DictationController ─► Mic
   - `Transcription/`: `TranscriptionEngine` protocol and `HelperProcessEngine`, the Python subprocess. Also
     `HelperProtocol`, the wire format, and `UnavailableEngine`, a stand-in used when the Info.plist keys from
     `scripts/build.sh` are missing.
-  - `Input/`: `HotkeySource` protocol, `GlobalHotkeyMonitor` (NSEvent), and `HoldToTalkDetector`, the hold logic.
-  - `Output/`: `TextInserting` protocol and `PasteboardTextInserter`.
+  - `Input/`: `HotkeySource` protocol, `GlobalHotkeyMonitor` (NSEvent), and `TapToToggleDetector`, the tap logic.
+  - `Output/`: `TextInserting` protocol and `PasteboardTextInserter`. `SystemSounds` maps each `FeedbackSound` to a
+    built-in macOS sound.
   - `Permissions/`: `PermissionsProviding` protocol and `SystemPermissions` (microphone and Accessibility).
   - `UI/`: `StatusMenu`. It shows what it's told and holds no logic.
   - `Support/`: `Log`.
@@ -79,14 +80,14 @@ When stdin closes, the helper exits. The helper writes logs to stderr, which goe
   - Avoid `@unchecked Sendable`. If you can't, explain why it's safe in a `// Safety:` comment, as in
     `HelperConnection`.
 - **Dependency injection by initializer.** Every system boundary reaches `DictationController` through
-  `Dependencies`: hotkey, mic, engine, paste and permissions as small protocols, and the alert sound as a closure.
+  `Dependencies`: hotkey, mic, engine, paste and permissions as small protocols, and feedback sounds as a closure.
   Tests use the fakes in `Tests/.../Fakes.swift`. Don't reach for singletons or `shared` from inside the core. `Log`
   is the one deliberate exception: a file append, and tests may write to the real log.
 - **Internal by default.** Only `AppDelegate` is `public`, because `main.swift` is in another module. Tests use
   `@testable import`.
 - **Keep protocols small.** Add a method only when a caller needs it. Extend an existing type rather than adding a
   parallel one that does the same job.
-- **Keep logic pure where you can.** `HoldToTalkDetector`, `HelperProtocol`, `AppStatus.presentation` and
+- **Keep logic pure where you can.** `TapToToggleDetector`, `HelperProtocol`, `AppStatus.presentation` and
   `HelperProcessEngine.Configuration(infoDictionary:)` have no side effects and get table-style tests. Follow that
   pattern for new logic.
 - **Testing:**
@@ -109,7 +110,7 @@ When stdin closes, the helper exits. The helper writes logs to stderr, which goe
 |---|---|
 | New tunable (durations, trailing text) | Add a field to `DictationSettings` with a default. If users should change it, add persistence behind a protocol injected at `AppDelegate` |
 | Another transcription engine (e.g. Core ML or FluidAudio) | Write a new type that conforms to `TranscriptionEngine` and pick it in `AppDelegate.makeEngine()`. Add tests like `HelperProcessEngineTests` |
-| Configurable hotkey | `ModifierKey` is the value type and `HoldToTalkDetector` holds the logic. A non-modifier key needs a new `HotkeySource` |
+| Configurable hotkey | `ModifierKey` is the value type and `TapToToggleDetector` holds the logic. A non-modifier key needs a new `HotkeySource` |
 | New pipeline step (e.g. text post-processing) | A pure function or small protocol called from `DictationController.complete`, with tests in `DictationControllerTests` |
 | Menu items or status text | `StatusMenu` for items (closures wired in `AppDelegate`), `AppStatus.presentation` for text |
 | New helper message | Both protocol files, plus tests on both sides |
@@ -121,5 +122,7 @@ When stdin closes, the helper exits. The helper writes logs to stderr, which goe
   Privacy & Security → Accessibility and add it again.
 - `build.sh` writes the helper's absolute paths into the app bundle. Rebuild after moving the folder.
 - Paste uses key code 9, which is V on QWERTY only.
+- NSEvent monitors only observe, so fn and Esc still reach macOS and the focused app. A plain fn tap also triggers
+  System Settings → Keyboard → "Press 🌐 key to" unless that's set to "Do Nothing".
 - Agents can't fully exercise the hotkey, mic and paste. To change them, a human has to run `make run` and dictate
   into a text field. Say so when you hand off a change that touches them.

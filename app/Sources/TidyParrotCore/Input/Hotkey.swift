@@ -1,48 +1,57 @@
 import Foundation
 
 enum HotkeyEvent: Equatable, Sendable {
-    case press
-    case release
-    /// Another key was pressed during the hold, e.g. ⌥E for an accent, so this wasn't dictation.
+    /// The hotkey was tapped on its own: start recording, or stop and insert.
+    case toggle
+    /// Esc was pressed: discard the recording, if any.
     case cancel
 }
 
-/// A single modifier key used for hold-to-talk, identified by its side-specific device mask.
+/// A single modifier key used as the dictation hotkey.
 struct ModifierKey: Equatable, Sendable {
     let keyCode: UInt16
-    /// NX_DEVICE*KEYMASK bit for this key, which tells left and right modifiers apart.
-    let deviceMask: UInt
+    /// The modifier-flags bit that is set while this key is down.
+    let flagMask: UInt
     let displayName: String
 
-    static let rightOption = ModifierKey(keyCode: 61, deviceMask: 0x40, displayName: "Right ⌥")
+    /// fn has no left and right variants, so the generic NX_SECONDARYFNMASK bit identifies it.
+    static let function = ModifierKey(keyCode: 63, flagMask: 0x80_0000, displayName: "fn")
 }
 
-/// Hold-to-talk logic, kept free of NSEvent so it can be tested directly.
-struct HoldToTalkDetector {
+/// Tap-to-toggle logic, kept free of NSEvent so it can be tested directly.
+struct TapToToggleDetector {
+    private static let escapeKeyCode: UInt16 = 53
+
     let key: ModifierKey
-    private var isHeld = false
+    private var isDown = false
+    /// The hotkey doubles as a modifier (fn+arrows, fn+Delete), so a press only counts as a tap if nothing else was
+    /// pressed before it was released.
+    private var usedAsModifier = false
 
     init(key: ModifierKey) {
         self.key = key
     }
 
     mutating func flagsChanged(keyCode: UInt16, modifierFlags: UInt) -> HotkeyEvent? {
-        guard keyCode == key.keyCode else { return nil }
-        let down = modifierFlags & key.deviceMask != 0
-        if down && !isHeld {
-            isHeld = true
-            return .press
+        guard keyCode == key.keyCode else {
+            if isDown { usedAsModifier = true }
+            return nil
         }
-        if !down && isHeld {
-            isHeld = false
-            return .release
+        let down = modifierFlags & key.flagMask != 0
+        guard down != isDown else { return nil }
+        isDown = down
+        if down {
+            usedAsModifier = false
+            return nil
         }
-        return nil
+        return usedAsModifier ? nil : .toggle
     }
 
-    mutating func keyDown() -> HotkeyEvent? {
-        guard isHeld else { return nil }
-        isHeld = false
-        return .cancel
+    mutating func keyDown(keyCode: UInt16) -> HotkeyEvent? {
+        if isDown {
+            usedAsModifier = true
+            return nil
+        }
+        return keyCode == Self.escapeKeyCode ? .cancel : nil
     }
 }

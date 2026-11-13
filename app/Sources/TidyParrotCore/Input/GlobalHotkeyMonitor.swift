@@ -7,16 +7,16 @@ protocol HotkeySource: AnyObject {
     func start()
 }
 
-/// Watches the hotkey system-wide with NSEvent monitors.
+/// Watches the hotkey and Esc system-wide with NSEvent monitors.
 @MainActor
 final class GlobalHotkeyMonitor: HotkeySource {
     var onEvent: ((HotkeyEvent) -> Void)?
 
-    private var detector: HoldToTalkDetector
+    private var detector: TapToToggleDetector
     private var monitors: [Any] = []
 
     init(key: ModifierKey) {
-        detector = HoldToTalkDetector(key: key)
+        detector = TapToToggleDetector(key: key)
     }
 
     func start() {
@@ -47,7 +47,7 @@ final class GlobalHotkeyMonitor: HotkeySource {
             switch event.type {
             case .flagsChanged:
                 detector.flagsChanged(keyCode: event.keyCode, modifierFlags: event.modifierFlags.rawValue)
-            case .keyDown: detector.keyDown()
+            case .keyDown: detector.keyDown(keyCode: event.keyCode)
             default: nil
             }
         if let result { onEvent?(result) }

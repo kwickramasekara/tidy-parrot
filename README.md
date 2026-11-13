@@ -1,7 +1,11 @@
 # Tidy Parrot
 
-Hold **Right ⌥**, speak, release: the text is pasted into whatever field has focus, with "um"s, "uh"s and
-stutters removed.
+Tap **fn**, speak, tap **fn** again: the text is pasted into whatever field has focus, with "um"s, "uh"s and
+stutters removed. Press **Esc** while recording to discard it. A chime plays when the mic opens (Tink) and
+closes (Pop).
+
+macOS also acts on a plain fn tap (emoji picker, input source or Apple Dictation), and Tidy Parrot can't block that.
+Set System Settings → Keyboard → **Press 🌐 key to** → **Do Nothing**.
 
 A small menu-bar app in Swift, plus a Python helper that keeps
 [Fluid Speech Pro (MLX)](https://huggingface.co/FluidVoice-Labs/fluid-speech-pro-mlx) loaded with clean mode on.
@@ -23,7 +27,7 @@ The build writes the helper's absolute paths into the app, so rebuild after movi
 
 On first launch macOS asks for two permissions:
 
-- **Microphone:** to record while you hold the key. If it's off, the menu says so when you press the key.
+- **Microphone:** to record between your fn taps. If it's off, the menu says so when you tap fn.
 - **Accessibility:** to see the hotkey and paste. Turn on Tidy Parrot under System Settings → Privacy & Security →
   Accessibility. The app checks every second and starts the hotkey once it's allowed. This hasn't been tested yet;
   if the hotkey doesn't work, quit and reopen the app.
@@ -34,15 +38,16 @@ menu bar shows a warning triangle, remove Tidy Parrot from that list with "−",
 ## How it works
 
 ```
-Right ⌥ down ─► AVAudioEngine (fresh each time, mic open only while held)
-Right ⌥ up   ─► resample to 16 kHz mono ─► helper over stdin ─► text over stdout
-             ─► clipboard + ⌘V ─► your clipboard restored 0.5 s later
+fn tap  ─► AVAudioEngine (fresh each time, mic open only until the next tap)
+fn tap  ─► resample to 16 kHz mono ─► helper over stdin ─► text over stdout
+        ─► clipboard + ⌘V ─► your clipboard restored 0.5 s later
 ```
 
 - `app/`: Swift package. `TidyParrotCore` holds the app logic: a `DictationController` running hotkey → recorder →
   engine → paste, with each step behind a small protocol. `TidyParrot` is the executable that launches it.
-  Pressing another key during the hold (e.g. ⌥E) cancels the recording. Recordings stop after 2 minutes in case the
-  key release is missed, since password fields hide key events from other apps.
+  Only a plain fn tap toggles: fn used with another key (fn+arrows, fn+Delete) is left alone. Esc discards the
+  recording, and the focused app still gets the Esc. Recordings stop after 3 minutes in case the stopping tap is
+  missed, since password fields hide key events from other apps.
 - `helper/`: `tidy_parrot_helper.py` loads the 8-bit model with clean mode once and warms it up, then answers one
   clip at a time over the protocol in `wire_protocol.py`. If the app quits or crashes, the helper's stdin closes and
   it exits. `vendor/fluid_speech_mlx.py` is FluidVoice's loader from the model repo, unmodified.
@@ -74,7 +79,7 @@ helper/.venv/bin/python helper/tidy_parrot_helper.py --file some.wav [--verbatim
 - Clean mode removes fillers and most repeats. In testing it dropped "um", "uh" and "I I" but kept
   "we should we should".
 - Paste uses key code 9 (V on QWERTY). Other keyboard layouts may need a different code.
-- Recordings stop at 2 minutes and aren't split into chunks. Untested past a minute or so.
+- Recordings stop at 3 minutes and aren't split into chunks. Untested past a minute or so.
 - `parakeet-mlx` is pinned, because the vendored loader patches its internals.
 
 ## Credits

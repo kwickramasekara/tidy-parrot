@@ -11,7 +11,7 @@
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>LSUIElement</key><true/>
-  <key>NSMicrophoneUsageDescription</key><string>Tidy Parrot listens only while you hold the dictation key.</string>
+  <key>NSMicrophoneUsageDescription</key><string>Tidy Parrot listens only from one tap of the dictation key to the next.</string>
   <!-- TPHelperPython, TPHelperScript and TPHelperArguments are added by scripts/build.sh. -->
 </dict>
 </plist>

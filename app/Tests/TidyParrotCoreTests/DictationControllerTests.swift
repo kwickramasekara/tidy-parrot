@@ -9,17 +9,17 @@ struct DictationControllerTests {
     let engine = FakeEngine()
     let inserter = FakeInserter()
     let permissions = FakePermissions()
-    let alerts = AlertCounter()
+    let sounds = SoundLog()
 
-    final class AlertCounter {
-        var count = 0
+    final class SoundLog {
+        var played: [FeedbackSound] = []
     }
 
     func makeController(settings: DictationSettings = DictationSettings()) -> DictationController {
         DictationController(
             dependencies: .init(
                 hotkey: hotkey, recorder: recorder, engine: engine, inserter: inserter, permissions: permissions,
-                alert: { alerts.count += 1 }),
+                play: { sounds.played.append($0) }),
             settings: settings)
     }
 
@@ -76,24 +76,24 @@ struct DictationControllerTests {
 
     // MARK: Happy path
 
-    @Test func pressRecordsAndReleaseInsertsTextWithTrailingSpace() async {
+    @Test func toggleRecordsAndSecondToggleInsertsTextWithTrailingSpace() async throws {
         let controller = makeReadyController()
-        hotkey.send(.press)
+        hotkey.send(.toggle)
         #expect(controller.status == .listening)
 
-        let task = controller.finishRecording()
+        hotkey.send(.toggle)
         #expect(controller.status == .transcribing)
-        await task?.value
+        try await waitUntil { controller.status == .ready(cleanMode: true) }
 
         #expect(engine.received.count == 1)
         #expect(inserter.inserted == ["hello "])
-        #expect(controller.status == .ready(cleanMode: true))
+        #expect(sounds.played == [.recordingStarted, .recordingStopped])
     }
 
     @Test func emptyTranscriptInsertsNothing() async {
         engine.result = .success(Transcript(text: "", milliseconds: 1))
         let controller = makeReadyController()
-        hotkey.send(.press)
+        hotkey.send(.toggle)
         await controller.finishRecording()?.value
         #expect(inserter.inserted.isEmpty)
     }
@@ -102,29 +102,29 @@ struct DictationControllerTests {
         let controller = makeReadyController()
         var messages: [String] = []
         controller.onMessage = { messages.append($0) }
-        hotkey.send(.press)
+        hotkey.send(.toggle)
         await controller.finishRecording()?.value
         #expect(messages == ["Last: 1.0s of audio in 42 ms"])
     }
 
     // MARK: Refusals and failures
 
-    @Test func pressBeforeEngineReadyAlertsAndDoesNotRecord() {
+    @Test func toggleBeforeEngineReadyAlertsAndDoesNotRecord() {
         let controller = makeController()
         controller.start()
-        hotkey.send(.press)
+        hotkey.send(.toggle)
         #expect(!recorder.isRecording)
-        #expect(alerts.count == 1)
+        #expect(sounds.played == [.alert])
     }
 
-    @Test func pressWithoutMicPermissionAlertsWithMessage() {
+    @Test func toggleWithoutMicPermissionAlertsWithMessage() {
         permissions.isMicrophoneAuthorized = false
         let controller = makeReadyController()
         var messages: [String] = []
         controller.onMessage = { messages.append($0) }
-        hotkey.send(.press)
+        hotkey.send(.toggle)
         #expect(!recorder.isRecording)
-        #expect(alerts.count == 1)
+        #expect(sounds.played == [.alert])
         #expect(messages.first?.hasPrefix("Microphone access is off") == true)
     }
 
@@ -133,8 +133,8 @@ struct DictationControllerTests {
         let controller = makeReadyController()
         var messages: [String] = []
         controller.onMessage = { messages.append($0) }
-        hotkey.send(.press)
-        #expect(alerts.count == 1)
+        hotkey.send(.toggle)
+        #expect(sounds.played == [.alert])
         #expect(messages == ["Mic error: fake failure"])
     }
 
@@ -143,10 +143,10 @@ struct DictationControllerTests {
         let controller = makeReadyController()
         var messages: [String] = []
         controller.onMessage = { messages.append($0) }
-        hotkey.send(.press)
+        hotkey.send(.toggle)
         await controller.finishRecording()?.value
         #expect(inserter.inserted.isEmpty)
-        #expect(alerts.count == 1)
+        #expect(sounds.played == [.recordingStarted, .recordingStopped, .alert])
         #expect(messages == ["Error: fake failure"])
         #expect(controller.status == .ready(cleanMode: true))
     }
@@ -154,54 +154,59 @@ struct DictationControllerTests {
     @Test func tapShorterThanMinimumIsIgnored() {
         recorder.clipToReturn = AudioClip(samples: [Float](repeating: 0, count: 1_000))  // 62 ms
         let controller = makeReadyController()
-        hotkey.send(.press)
+        hotkey.send(.toggle)
         #expect(controller.finishRecording() == nil)
         #expect(engine.received.isEmpty)
+        #expect(sounds.played == [.recordingStarted, .recordingStopped])  // the mic still opened and closed
         #expect(controller.status == .ready(cleanMode: true))
     }
 
     @Test func cancelDiscardsRecording() {
         let controller = makeReadyController()
-        hotkey.send(.press)
+        hotkey.send(.toggle)
         hotkey.send(.cancel)
         #expect(recorder.cancelCount == 1)
         #expect(engine.received.isEmpty)
+        #expect(sounds.played == [.recordingStarted, .recordingStopped])
         #expect(controller.status == .ready(cleanMode: true))
     }
 
-    @Test func releaseWithoutPressDoesNothing() {
+    @Test func cancelWithoutRecordingDoesNothing() {
         let controller = makeReadyController()
         #expect(controller.finishRecording() == nil)
         hotkey.send(.cancel)
         #expect(recorder.cancelCount == 0)
+        #expect(sounds.played.isEmpty)
     }
 
-    @Test func secondPressWhileRecordingIsIgnored() {
+    @Test func toggleAfterCancelStartsAFreshRecording() {
         let controller = makeReadyController()
-        hotkey.send(.press)
-        hotkey.send(.press)
-        #expect(alerts.count == 0)
+        hotkey.send(.toggle)
+        hotkey.send(.cancel)
+        hotkey.send(.toggle)
         #expect(controller.status == .listening)
+        #expect(engine.received.isEmpty)
     }
 
     @Test func recordingStopsAtMaximumDuration() async throws {
         var settings = DictationSettings()
         settings.maximumClipDuration = .milliseconds(20)
         let controller = makeReadyController(settings: settings)
-        hotkey.send(.press)
+        hotkey.send(.toggle)
         try await waitUntil { engine.received.count == 1 }
         #expect(!recorder.isRecording)
+        #expect(sounds.played == [.recordingStarted, .recordingStopped])  // so you know it stopped without a tap
         #expect(controller.status == .ready(cleanMode: true))
     }
 
-    @Test func engineFailingMidRecordingReportsErrorOnRelease() async {
+    @Test func engineFailingMidRecordingReportsErrorOnStop() async {
         engine.result = .failure(TranscriptionError.notRunning)
         let controller = makeReadyController()
         var messages: [String] = []
         controller.onMessage = { messages.append($0) }
-        hotkey.send(.press)
+        hotkey.send(.toggle)
         engine.emit(.failed("Helper stopped (status 1)"))
-        #expect(controller.status == .listening)  // the mic stays visibly open until release
+        #expect(controller.status == .listening)  // the mic stays visibly open until the next tap
 
         await controller.finishRecording()?.value
         #expect(messages == ["Error: Transcription helper isn't running"])
@@ -210,7 +215,7 @@ struct DictationControllerTests {
 
     @Test func stopClosesMicAndStopsEngine() {
         let controller = makeReadyController()
-        hotkey.send(.press)
+        hotkey.send(.toggle)
         controller.stop()
         #expect(!recorder.isRecording)
         #expect(engine.stopCount == 1)
