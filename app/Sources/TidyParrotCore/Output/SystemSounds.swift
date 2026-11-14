@@ -6,7 +6,7 @@ enum SystemSounds {
     static func play(_ sound: FeedbackSound) {
         switch sound {
         case .recordingStarted: _ = NSSound(named: "Tink")?.play()
-        case .recordingStopped: _ = NSSound(named: "Pop")?.play()
+        case .recordingStopped: _ = NSSound(named: "Morse")?.play()
         case .alert: NSSound.beep()
         }
     }

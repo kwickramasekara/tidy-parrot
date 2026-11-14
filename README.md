@@ -2,7 +2,7 @@
 
 Tap **fn**, speak, tap **fn** again: the text is pasted into whatever field has focus, with "um"s, "uh"s and
 stutters removed. Press **Esc** while recording to discard it. A chime plays when the mic opens (Tink) and
-closes (Pop).
+closes (Morse).
 
 macOS also acts on a plain fn tap (emoji picker, input source or Apple Dictation), and Tidy Parrot can't block that.
 Set System Settings → Keyboard → **Press 🌐 key to** → **Do Nothing**.
