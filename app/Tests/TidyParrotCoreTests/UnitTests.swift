@@ -551,12 +551,14 @@ struct VocabularyFileTests {
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
 
     @Test func createsAnEmptyFileWhenMissing() throws {
+        defer { try? FileManager.default.removeItem(at: folder) }
         let url = folder.appendingPathComponent("vocabulary.txt")
         #expect(VocabularyFile.prepareForEditing(at: url) == url)
         #expect(try Data(contentsOf: url).isEmpty)
     }
 
     @Test func leavesAnExistingFileAlone() throws {
+        defer { try? FileManager.default.removeItem(at: folder) }
         let url = folder.appendingPathComponent("vocabulary.txt")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try Data("React\n".utf8).write(to: url)

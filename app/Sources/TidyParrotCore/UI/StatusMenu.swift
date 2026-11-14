@@ -49,7 +49,7 @@ final class StatusMenu: NSObject {
         menu.addItem(headerSeparator)
         menu.addItem(withTitle: "Paste Last Dictation", action: #selector(pasteLastDictation), keyEquivalent: "")
             .target = self
-        menu.addItem(withTitle: "Edit Vocabulary…", action: #selector(editVocabulary), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Edit Vocabulary", action: #selector(editVocabulary), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Restart Helper", action: #selector(restartEngine), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Open Log", action: #selector(openLog), keyEquivalent: "").target = self
         menu.addItem(.separator())

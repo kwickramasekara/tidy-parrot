@@ -34,9 +34,13 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(parse("# only comments\n\n"), [])
 
 
+def temp_dir(test: unittest.TestCase) -> Path:
+    return Path(test.enterContext(tempfile.TemporaryDirectory()))
+
+
 class FileTests(unittest.TestCase):
     def setUp(self):
-        self.dir = Path(tempfile.mkdtemp())
+        self.dir = temp_dir(self)
 
     def test_missing_file_is_an_empty_vocabulary(self):
         self.assertEqual(read(self.dir / "vocabulary.txt"), ([], b""))
@@ -67,7 +71,7 @@ class FileTests(unittest.TestCase):
 
 class VocabularyTests(unittest.TestCase):
     def setUp(self):
-        self.path = Path(tempfile.mkdtemp()) / "vocabulary.txt"
+        self.path = temp_dir(self) / "vocabulary.txt"
         self.builds: list[list[str]] = []
         self.logs: list[str] = []
 
@@ -170,10 +174,11 @@ class WatchTests(unittest.TestCase):
     """Real FSEvents, with the save patterns editors use. Each save must rebuild exactly once."""
 
     def setUp(self):
-        self.dir = Path(tempfile.mkdtemp())
+        self.dir = temp_dir(self)
         self.path = self.dir / "vocabulary.txt"
         self.path.write_text("React\n")
         self.builds = 0
+        self.reloads = 0
 
         def build(terms):
             self.builds += 1
@@ -181,15 +186,29 @@ class WatchTests(unittest.TestCase):
 
         self.v = Vocabulary(self.path, build, lambda _: None)
         self.v.reload()
+        reload = self.v.reload
+
+        def counted_reload():
+            self.reloads += 1
+            return reload()
+
+        self.v.reload = counted_reload
         self.stop = threading.Event()
         self.thread = threading.Thread(target=vocab.watch, args=(self.v, self.stop, lambda _: None),
                                        kwargs={"debounce_ms": 300})
         self.thread.start()
-        time.sleep(0.5)  # let FSEvents start watching
+        self.addCleanup(self.thread.join, 5)
+        self.addCleanup(self.stop.set)
+        self.wait_for_watcher()
 
-    def tearDown(self):
-        self.stop.set()
-        self.thread.join(5)
+    def wait_for_watcher(self):
+        """FSEvents gives no ready signal, so touch the file until a reload shows the watcher is live. Same content,
+        so it never rebuilds."""
+        for _ in range(10):
+            self.path.touch()
+            if wait_until(lambda: self.reloads > 0, timeout=1.0):
+                return
+        self.fail("the watcher never reported a change")
 
     def assert_one_rebuild(self, expected_terms):
         self.assertTrue(wait_until(lambda: self.builds == 2), f"builds: {self.builds}")
@@ -215,10 +234,11 @@ class WatchTests(unittest.TestCase):
         self.assert_one_rebuild(("React", "Astro"))
 
     def test_other_files_in_the_folder_are_ignored(self):
+        reloads = self.reloads
         (self.dir / ".vocabulary.txt.swp").write_text("x")
         (self.dir / "notes.txt").write_text("x")
-        time.sleep(1.0)  # showing nothing rebuilds
-        self.assertEqual(self.builds, 1)
+        time.sleep(1.0)  # showing nothing reloads
+        self.assertEqual(self.reloads, reloads)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ recording doesn't start. Apps that don't say what has focus, such as Slack or VS
 dictation went nowhere, click into the field and choose **Paste Last Dictation** from the menu. The last dictation
 is kept in memory only, until you quit.
 
-Tech terms come out spelled the way you write them ("Pencilwrench", "PostHog", "Next.js", "useEffect") because of a
+Tech terms come out spelled the way you write them ("ast-grep", "PostHog", "Next.js", "useEffect") because of a
 vocabulary list. See [Vocabulary](#vocabulary).
 
 macOS also acts on a plain fn tap (emoji picker, input source or Apple Dictation), and Tidy Parrot can't block that.
@@ -54,16 +54,16 @@ To use a different certificate, such as an Apple Development one, run `make run 
 
 ## Vocabulary
 
-Choose **Edit Vocabulary…** in the menu to open `~/Library/Application Support/TidyParrot/vocabulary.txt`. It holds
+Choose **Edit Vocabulary** in the menu to open `~/Library/Application Support/TidyParrot/vocabulary.txt`. It holds
 one term per line, spelled and capitalised the way you want it typed. Lines starting with `#` are ignored. It starts
-with about 150 front-end terms (frameworks, build tools, React hooks, services). Save it and the change applies
+with about 115 front-end terms (frameworks, build tools, React hooks, services). Save it and the change applies
 within a few seconds, with no restart.
 
 The list is used in two ways:
 
 - **Boost:** while decoding, the model is nudged towards your terms when what it hears is close.
 - **Respelling:** after decoding, words that spell a term once spaces, case and punctuation are ignored are joined
-  and recased: "Pencil Wrench" → "Pencilwrench", "next JS" → "Next.js", "use effect" → "useEffect". Terms that are
+  and recased: "data dog" → "Datadog", "next JS" → "Next.js", "use effect" → "useEffect". Terms that are
   also everyday words ("React", "Fallow", "Cypress") are skipped here, so "we need to react quickly" stays as said.
 
 You don't list misspellings. What the list can't fix is a term that sounds like other words, such as "Qwik" and
@@ -74,7 +74,7 @@ the line number, and the previous list stays in effect until you fix it. Empty t
 vocabulary off. To get the default list back, quit, delete the `TidyParrot` folder, and relaunch.
 Option-click the icon to see how many terms are loaded and when.
 
-Measured with synthetic voices on held-out sentences, with 150 front-end terms: exactly right terms went from 43% to
+Measured with synthetic voices on held-out sentences, with an earlier 154-term list: exactly right terms went from 43% to
 76%, with no false hits on 30 trap sentences, and no added latency once the list is loaded. Expect lower numbers with
 a real voice and mic. The list builds in about a second after the model loads; dictation works without it meanwhile.
 

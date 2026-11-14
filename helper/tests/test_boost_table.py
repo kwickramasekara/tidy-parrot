@@ -10,11 +10,10 @@ from parakeet_mlx import boost
 
 from boost_table import BoostTable
 
-TERMS = {"React": 6.0, "React Native": 6.0, "Next.js": 6.0, "PostHog": 6.0, "ast-grep": 6.0, "Fallow": 6.0,
-         "i18next": 6.0, "C#": 6.0}
+TERMS = {term: 6.0 for term in ["React", "React Native", "Next.js", "PostHog", "ast-grep", "Fallow", "i18next", "C#"]}
 # Word starts ("▁…"), word pieces, and every single character, like a real BPE vocabulary.
-PIECES = ["▁React", "▁Re", "act", "▁Native", "▁Next", ".", "js", "▁Post", "Hog", "▁post", "hog", "▁ast", "-", "grep",
-          "▁Fall", "ow", "▁fallow", "▁i", "18", "next", "▁the", "▁quick", "ly", "▁C", "#", "▁", "'s", ",", "?"]
+PIECES = ["▁React", "▁Re", "act", "▁Native", "▁Next", ".", "js", "▁Post", "Hog", "▁post", "hog", "▁ast", "-",
+          "grep", "▁Fall", "ow", "▁fallow", "▁i", "18", "next", "▁the", "▁quick", "ly", "▁C", "#", "▁", "'s", ",", "?"]
 VOCABULARY = list(dict.fromkeys(PIECES + [f"▁{c}" for c in string.ascii_letters] + list(string.printable.strip())))
 
 
@@ -35,7 +34,8 @@ class BoostTableTests(unittest.TestCase):
 
     def test_build_all_covers_every_state_a_token_sequence_can_reach(self):
         state = self.table.start
-        for piece in ["▁React", "▁Native", "▁Next", ".", "js", "▁Post", "Hog", "▁ast", "-", "grep", "▁C", "#"]:
+        pieces = ["▁React", "▁Native", "▁Next", ".", "js", "▁Post", "Hog", "▁ast", "-", "grep", "▁C", "#"]
+        for piece in pieces:
             state = self.table.advance(state, VOCABULARY.index(piece))
             self.assertIn(state, self.table.rows)
 

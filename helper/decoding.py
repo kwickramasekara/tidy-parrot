@@ -57,7 +57,7 @@ def decode_greedy(model, features: mx.array, length: int, rows: BoostRows | None
     vocab_size = len(model.vocabulary)
     blank = vocab_size
     last_token, hidden = None, None
-    state = rows.table.start if rows else None
+    state = rows.table.start if rows is not None else None
     tokens: list[AlignedToken] = []
     step, new_symbols = 0, 0
     while step < length:

@@ -64,13 +64,14 @@ def build(model, terms: list[str]) -> Built:
 def transcribe(model, samples: np.ndarray, vocabulary: vocab.Vocabulary | None) -> str:
     if samples.size < model.preprocessor_config.hop_length:
         return ""
-    active = vocabulary.active if vocabulary else None  # one reference per clip, so a rebuild can't change it midway
-    built = active.built if active else None
+    active = vocabulary.active if vocabulary is not None else None  # one reference per clip: a rebuild can't change it
+    built = active.built if active is not None else None
+    # Same path as model.transcribe() but from memory, so no temp file or ffmpeg per clip.
     mel = log_mel(mx.array(samples, dtype=mx.float32), model.preprocessor_config)
     try:
         features, length = decoding.encode(model, mel)
-        text = decoding.text(decoding.decode_greedy(model, features, length, built.rows if built else None))
-        return snap.snap(text, built.snap_table) if built else text
+        text = decoding.text(decoding.decode_greedy(model, features, length, built.rows if built is not None else None))
+        return snap.snap(text, built.snap_table) if built is not None else text
     finally:
         # MLX keeps freed GPU buffers cached up to roughly the GPU working set, and each clip length needs new sizes,
         # so the idle helper grew by GBs over a session. Clearing per clip measured no slower.
@@ -89,10 +90,9 @@ def main() -> None:
         reply({"error": f"model not found at {MODEL_DIR}; run make setup"})
         sys.exit(1)
 
-    vocabulary = None
-    if args.vocabulary:
-        if vocab.seed(args.vocabulary, DEFAULT_VOCABULARY):
-            log("vocabulary created with the default terms")
+    # Before the model loads, so Edit Vocabulary finds the file as soon as the app starts.
+    if args.vocabulary and vocab.seed(args.vocabulary, DEFAULT_VOCABULARY):
+        log("vocabulary created with the default terms")
 
     start = time.perf_counter()
     model = load(str(MODEL_DIR), bits=8, clean_mode=clean_mode)
@@ -103,13 +103,12 @@ def main() -> None:
     load_ms = round((time.perf_counter() - start) * 1000)
     log(f"model loaded in {load_ms} ms (clean_mode={clean_mode})")
 
-    if args.vocabulary:
-        vocabulary = vocab.Vocabulary(args.vocabulary, lambda terms: build(model, terms), log)
+    vocabulary = vocab.Vocabulary(args.vocabulary, lambda terms: build(model, terms), log) if args.vocabulary else None
 
     if args.file:
         from parakeet_mlx.audio import load_audio
 
-        if vocabulary:
+        if vocabulary is not None:
             vocabulary.reload()
         samples = np.array(load_audio(Path(args.file), SAMPLE_RATE, mx.float32))
         start = time.perf_counter()
@@ -118,13 +117,13 @@ def main() -> None:
         return
 
     ready = {"ready": True, "load_ms": load_ms, "clean_mode": clean_mode}
-    if vocabulary:
+    if vocabulary is not None:
         # Built in the background: dictation works meanwhile, without the vocabulary for the first second or two.
         vocab.start(vocabulary, log)
         ready["vocabulary"] = vocabulary.status()
     reply(ready)
     serve(sys.stdin.buffer, PROTOCOL_OUT, lambda samples: transcribe(model, samples, vocabulary), log,
-          vocabulary.status if vocabulary else None)
+          vocabulary.status if vocabulary is not None else None)
 
 
 if __name__ == "__main__":

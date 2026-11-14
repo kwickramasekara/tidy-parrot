@@ -64,7 +64,8 @@ struct HelperIntegrationTests {
         }
         let defaults = try Self.termCount(Self.repoRoot.appendingPathComponent("helper/default_vocabulary.txt"))
         try await Self.transcribe(clip, with: engine) { latest?.loadedAt != nil }
-        #expect(latest == VocabularyStatus(terms: defaults, loadedAt: latest?.loadedAt, problem: nil))
+        #expect(latest?.terms == defaults)
+        #expect(latest?.problem == nil)
         #expect(try Self.termCount(file) == defaults)
 
         try Data("React\n---\n".utf8).write(to: file, options: .atomic)

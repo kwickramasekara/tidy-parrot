@@ -16,6 +16,8 @@ from typing import Any, Generic, TypeVar
 
 Log = Callable[[str], None]
 Built = TypeVar("Built")
+# How long to wait before watching again after the folder vanished or the watcher failed.
+RETRY_SECONDS = 5.0
 
 
 class VocabularyError(Exception):
@@ -83,7 +85,7 @@ class Vocabulary(Generic[Built]):
         self.error: str | None = None
 
     def reload(self) -> bool:
-        """Reads the file and swaps in a fresh build. Returns False when nothing changed or the file was rejected."""
+        """Reads the file and swaps in a fresh build. False when nothing changed or the file couldn't be used."""
         with self._lock:
             try:
                 terms, data = read(self.path)
@@ -129,8 +131,7 @@ def is_vocabulary_change(path: Path) -> Callable[[Any, str], bool]:
     return lambda _change, changed: Path(changed).name == name
 
 
-def watch(vocabulary: Vocabulary, stop: threading.Event, log: Log, retry_seconds: float = 5.0,
-          debounce_ms: int = 1_600) -> None:
+def watch(vocabulary: Vocabulary, stop: threading.Event, log: Log, debounce_ms: int = 1_600) -> None:
     """Reloads on every change until `stop` is set. Uses FSEvents through watchfiles, so it costs nothing at idle.
     One save can arrive as several events, or several batches; the content check in `reload` makes that one rebuild."""
     from watchfiles import watch as watch_paths
@@ -146,19 +147,17 @@ def watch(vocabulary: Vocabulary, stop: threading.Event, log: Log, retry_seconds
         except FileNotFoundError:
             # The folder was removed. Treat that like a deleted file, and pick it up again if it comes back.
             vocabulary.reload()
-            stop.wait(retry_seconds)
+            stop.wait(RETRY_SECONDS)
         except Exception as e:
             log(f"vocabulary watch failed ({type(e).__name__}); retrying")
-            stop.wait(retry_seconds)
+            stop.wait(RETRY_SECONDS)
 
 
-def start(vocabulary: Vocabulary, log: Log) -> threading.Event:
-    """Loads in the background, then keeps watching. Set the returned event to stop."""
-    stop = threading.Event()
+def start(vocabulary: Vocabulary, log: Log) -> None:
+    """Loads in the background, then keeps watching for as long as the helper runs."""
 
     def run():
         vocabulary.reload()
-        watch(vocabulary, stop, log)
+        watch(vocabulary, threading.Event(), log)
 
     threading.Thread(target=run, name="vocabulary", daemon=True).start()
-    return stop

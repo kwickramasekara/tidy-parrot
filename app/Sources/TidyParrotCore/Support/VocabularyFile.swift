@@ -7,7 +7,7 @@ enum VocabularyFile {
         .appendingPathComponent("TidyParrot/vocabulary.txt")
 
     /// Returns the file to open, creating an empty one if the user deleted it (that's how they turn the vocabulary
-    /// off), so choosing Edit Vocabulary… always opens something.
+    /// off), so choosing Edit Vocabulary always opens something.
     static func prepareForEditing(at url: URL = url) -> URL {
         let files = FileManager.default
         if !files.fileExists(atPath: url.path) {

@@ -13,7 +13,7 @@ Run everything through `make`; `make help` lists every target.
 | `make setup` | One time: creates the helper venv and downloads the pinned model (~806 MB) |
 | `make build` / `make run` | Builds `build/TidyParrot.app` / also quits the running copy and opens the new one. Add `VERBATIM=1` to keep fillers |
 | `make icon` | Regenerates the committed `app/Resources/AppIcon.icns` from `AppIcon.png`. Run it after changing the artwork |
-| `make test` | Swift unit tests plus Python protocol tests. Fast, and needs no model |
+| `make test` | Swift unit tests plus Python tests (protocol, vocabulary, boost table). Fast, and needs no model |
 | `make lint` / `make format` | swift-format with `.swift-format`. Lint is `--strict` |
 | `make integration WAV=clip.wav` | Swift engine against the real helper and model |
 | `make smoke WAV=clip.wav` | Python helper alone, over its stdin protocol |
@@ -117,7 +117,8 @@ When stdin closes, the helper exits. The helper writes logs to stderr, which goe
     counts, and report a bad line by its number.
   - Nothing goes over the network at runtime, and the model loads from `helper/model`.
 - **Pinned versions:** `helper/requirements.txt` is pinned because the vendored loader patches `parakeet-mlx`
-  internals. If you bump the model revision in `scripts/setup.sh`, re-vendor the loader from the same revision.
+  internals, `decoding.py` copies its greedy loop and `boost_table.py` relies on its booster's state layout. If you
+  bump the model revision in `scripts/setup.sh`, re-vendor the loader from the same revision.
 - **Comments say why, not what.** Many existing comments record platform facts learned the hard way, for example
   global monitors skipping the app's own events, or password fields hiding key-ups. Keep them.
 
