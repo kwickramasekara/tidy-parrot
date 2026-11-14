@@ -44,7 +44,7 @@ GlobalHotkeyMonitor ─toggle/cancel────────► DictationControl
     on-screen meter.
   - `Transcription/`: `TranscriptionEngine` protocol and `HelperProcessEngine`, the Python subprocess. Also
     `HelperProtocol`, the wire format, and `UnavailableEngine`, a stand-in used when the Info.plist keys from
-    `scripts/build.sh` are missing.
+    `scripts/build.sh` are missing. `VocabularyStatus` is what the engine reports about the vocabulary file.
   - `Input/`: `HotkeySource` protocol, `GlobalHotkeyMonitor` (NSEvent), and `TapToToggleDetector`, the tap logic.
   - `Output/`: `TextInserting` protocol and `PasteboardTextInserter`. `FocusedInputChecking` protocol and
     `AccessibilityFocusedInput`, which refuses recording only for roles that never take text, and fails open
@@ -53,10 +53,16 @@ GlobalHotkeyMonitor ─toggle/cancel────────► DictationControl
   - `UI/`: `StatusMenu` and `RecordingIndicator`, which show what they're told. `RecordingIndicator` is the pill
     with level bars and a timer, shown while listening. It must never take focus, or the paste lands in the wrong
     app. `LevelBars` holds its animation as pure state.
-  - `Support/`: `Log`.
+  - `Support/`: `Log`, and `VocabularyFile`, which owns the vocabulary path. The app passes it to the helper with
+    `--vocabulary` and opens it from the menu; it never parses the file.
 - **`helper/`**:
   - `tidy_parrot_helper.py` loads the model once and serves clips.
   - `wire_protocol.py` holds the framing and serve loop, with no MLX, so it's testable.
+  - Vocabulary: `vocabulary.py` parses the file, seeds it from `default_vocabulary.txt` on first launch (when its
+    folder doesn't exist yet), watches the folder with `watchfiles`, and swaps in each new build atomically. It has no
+    MLX; the build is injected. `boost_table.py` precomputes the boost for every booster state, `decoding.py` is
+    parakeet-mlx's greedy loop with the boost added, and `snap.py` respells terms after decoding. The dictionary is
+    read only here, which is why respelling isn't a Swift pipeline step.
   - `vendor/fluid_speech_mlx.py` is the upstream loader. **Unmodified; don't edit.**
 - **`scripts/`**:
   - `build.sh` assembles the `.app` from `app/Resources/Info.plist`. It adds the helper paths with `plutil` and
@@ -74,6 +80,9 @@ together** and update the tests on both sides.
    exits.
 2. For each clip, the app sends a little-endian `UInt32` byte count followed by float32 PCM.
 3. The helper answers each clip with one JSON line: `{"text", "ms"}` or `{"error"}`.
+
+The ready line and each transcript may also carry `"vocabulary": {"terms", "loaded_at", "error"}`. It rides on
+replies because the app reads exactly one line per clip, so the helper can never write unprompted.
 
 When stdin closes, the helper exits. The helper writes logs to stderr, which goes to `~/Library/Logs/TidyParrot.log`.
 
@@ -104,7 +113,8 @@ When stdin closes, the helper exits. The helper writes logs to stderr, which goe
     app from a test: `PasteboardTextInserterTests` uses a private pasteboard and a fake ⌘V.
   - Python tests use stdlib `unittest`, so no new dependencies.
 - **Privacy:**
-  - Never log or persist transcribed text; log timings and states only.
+  - Never log or persist transcribed text; log timings and states only. The same goes for vocabulary terms: log
+    counts, and report a bad line by its number.
   - Nothing goes over the network at runtime, and the model loads from `helper/model`.
 - **Pinned versions:** `helper/requirements.txt` is pinned because the vendored loader patches `parakeet-mlx`
   internals. If you bump the model revision in `scripts/setup.sh`, re-vendor the loader from the same revision.
@@ -121,6 +131,7 @@ When stdin closes, the helper exits. The helper writes logs to stderr, which goe
 | New pipeline step (e.g. text post-processing) | A pure function or small protocol called from `DictationController.complete`, with tests in `DictationControllerTests` |
 | Menu items or status text | `StatusMenu` for items (closures wired in `AppDelegate`), `AppStatus.presentation` for text |
 | New helper message | Both protocol files, plus tests on both sides |
+| Vocabulary behaviour (weight, respelling rules) | `BOOST_WEIGHT` in `tidy_parrot_helper.py`, `snap.py`. Check accuracy against real dictation, not just tests |
 | Info.plist key | Static keys go in `app/Resources/Info.plist`. Machine-specific keys go in `scripts/build.sh` via `plutil` |
 
 ## Gotchas
@@ -130,6 +141,10 @@ When stdin closes, the helper exits. The helper writes logs to stderr, which goe
   add it again after each build.
 - `build.sh` writes the helper's absolute paths into the app bundle. Rebuild after moving the folder.
 - Paste uses key code 9, which is V on QWERTY only.
+- MLX streams belong to a thread. The vocabulary builds on its own thread, so it must create no MLX arrays;
+  `decoding.BoostRows` converts rows on the transcribing thread. Otherwise every clip fails with "There is no
+  Stream(gpu, …) in current thread".
+- `watchfiles` prints debug output to the real stdout, which is the protocol channel, so `debug=False` stays explicit.
 - NSEvent monitors only observe, so fn and Esc still reach macOS and the focused app. A plain fn tap also triggers
   System Settings → Keyboard → "Press 🌐 key to" unless that's set to "Do Nothing".
 - Agents can't fully exercise the hotkey, mic and paste. To change them, a human has to run `make run` and dictate

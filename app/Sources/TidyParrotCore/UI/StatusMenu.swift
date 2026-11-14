@@ -7,6 +7,7 @@ final class StatusMenu: NSObject {
     private let diagnostics: () -> [String]
     private let canPasteLastDictation: () -> Bool
     private let onPasteLastDictation: () -> Void
+    private let onEditVocabulary: () -> Void
     private let onRestartEngine: () -> Void
     private let onOpenLog: () -> Void
 
@@ -21,12 +22,13 @@ final class StatusMenu: NSObject {
     init(
         icon: NSImage, hotkey: ModifierKey, diagnostics: @escaping () -> [String],
         canPasteLastDictation: @escaping () -> Bool, onPasteLastDictation: @escaping () -> Void,
-        onRestartEngine: @escaping () -> Void, onOpenLog: @escaping () -> Void
+        onEditVocabulary: @escaping () -> Void, onRestartEngine: @escaping () -> Void, onOpenLog: @escaping () -> Void
     ) {
         self.hotkey = hotkey
         self.diagnostics = diagnostics
         self.canPasteLastDictation = canPasteLastDictation
         self.onPasteLastDictation = onPasteLastDictation
+        self.onEditVocabulary = onEditVocabulary
         self.onRestartEngine = onRestartEngine
         self.onOpenLog = onOpenLog
         super.init()
@@ -47,6 +49,7 @@ final class StatusMenu: NSObject {
         menu.addItem(headerSeparator)
         menu.addItem(withTitle: "Paste Last Dictation", action: #selector(pasteLastDictation), keyEquivalent: "")
             .target = self
+        menu.addItem(withTitle: "Edit Vocabulary…", action: #selector(editVocabulary), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Restart Helper", action: #selector(restartEngine), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Open Log", action: #selector(openLog), keyEquivalent: "").target = self
         menu.addItem(.separator())
@@ -81,6 +84,7 @@ final class StatusMenu: NSObject {
     }
 
     @objc private func pasteLastDictation() { onPasteLastDictation() }
+    @objc private func editVocabulary() { onEditVocabulary() }
     @objc private func restartEngine() { onRestartEngine() }
     @objc private func openLog() { onOpenLog() }
 }

@@ -33,6 +33,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             diagnostics: { [weak controller] in controller?.diagnostics.lines ?? [] },
             canPasteLastDictation: { [weak controller] in controller?.canPasteLastDictation ?? false },
             onPasteLastDictation: { [weak controller] in controller?.pasteLastDictation() },
+            onEditVocabulary: { NSWorkspace.shared.open(VocabularyFile.prepareForEditing()) },
             onRestartEngine: { [weak controller] in controller?.restartEngine() },
             onOpenLog: { NSWorkspace.shared.open(Log.url) }
         )
@@ -65,6 +66,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         else {
             return UnavailableEngine(reason: "Helper paths missing from Info.plist; rebuild with make build")
         }
-        return HelperProcessEngine(configuration: configuration)
+        // The app owns the vocabulary path, so the menu item and the helper can't disagree about it.
+        return HelperProcessEngine(
+            configuration: .init(
+                python: configuration.python, script: configuration.script,
+                arguments: configuration.arguments + ["--vocabulary", VocabularyFile.url.path]))
     }
 }

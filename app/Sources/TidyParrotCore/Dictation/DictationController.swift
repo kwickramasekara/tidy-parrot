@@ -47,6 +47,7 @@ final class DictationController {
     /// Kept in memory only, never persisted, so it's gone on quit.
     private var lastDictation: String?
     private var lastTiming: Diagnostics.Timing?
+    private var vocabulary: VocabularyStatus?
 
     init(dependencies: Dependencies, settings: DictationSettings = DictationSettings()) {
         deps = dependencies
@@ -59,7 +60,10 @@ final class DictationController {
         if inFlight > 0 { return .transcribing }
         switch engineState {
         case .loading: return .loading
-        case .ready(let cleanMode, _): return .ready(cleanMode: cleanMode)
+        case .ready(let cleanMode, _):
+            // Dictation still works with the previous terms, but a rejected save should be visible.
+            if let problem = vocabulary?.problem { return .vocabularyProblem(problem) }
+            return .ready(cleanMode: cleanMode)
         case .failed(let reason): return .failed(reason)
         }
     }
@@ -68,6 +72,13 @@ final class DictationController {
         deps.engine.onStateChange = { [weak self] state in
             self?.engineState = state
             self?.publishStatus()
+        }
+        deps.engine.onVocabularyChange = { [weak self] vocabulary in
+            guard let self, vocabulary != self.vocabulary else { return }
+            Log.write(
+                "vocabulary: \(vocabulary.terms) terms" + (vocabulary.problem.map { ", rejected save: \($0)" } ?? ""))
+            self.vocabulary = vocabulary
+            publishStatus()
         }
         deps.engine.start()
         deps.permissions.requestMicrophoneAccess()
@@ -90,7 +101,7 @@ final class DictationController {
     /// Read live, so a permission revoked since launch shows up.
     var diagnostics: Diagnostics {
         Diagnostics(
-            engine: engineState, lastTiming: lastTiming,
+            engine: engineState, lastTiming: lastTiming, vocabulary: vocabulary,
             isMicrophoneAuthorized: deps.permissions.isMicrophoneAuthorized,
             isAccessibilityTrusted: deps.permissions.isAccessibilityTrusted)
     }
@@ -135,8 +146,12 @@ final class DictationController {
             deps.play(.alert)
             return
         }
+        let clock = ContinuousClock()
+        let pressed = clock.now
         // A quiet refusal, with no message: it's an everyday miss, not a fault to explain.
-        guard deps.focus.hasFocusedTextInput() else {
+        let hasInput = deps.focus.hasFocusedTextInput()
+        let focusChecked = clock.now
+        guard hasInput else {
             deps.play(.noFocusedInput)
             return
         }
@@ -151,6 +166,10 @@ final class DictationController {
             return
         }
         deps.play(.recordingStarted)
+        // Press-to-chime latency, split by step, to see what makes starting feel slow.
+        Log.write(
+            "start: focus check \(Self.milliseconds(focusChecked - pressed)) ms, "
+                + "mic \(Self.milliseconds(clock.now - focusChecked)) ms")
         let limit = settings.maximumClipDuration
         recordingLimit = Task { [weak self] in
             try? await Task.sleep(for: limit)
@@ -217,6 +236,10 @@ final class DictationController {
         Log.write(message)
         onMessage?(message)
         deps.play(.alert)
+    }
+
+    private static func milliseconds(_ duration: Duration) -> Int {
+        Int(duration / .milliseconds(1))
     }
 
     private func publishStatus() {

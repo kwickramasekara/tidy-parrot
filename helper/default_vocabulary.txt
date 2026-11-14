@@ -1,0 +1,159 @@
+# Tidy Parrot vocabulary: one term per line, spelled and capitalised the way you want it typed.
+# Dictation favours these terms and fixes their spacing and case, e.g. "Pencil Wrench" becomes "Pencilwrench".
+# Lines starting with # are ignored. Saved changes apply within a few seconds; no restart needed.
+# Empty this file, or delete it, to turn the vocabulary off.
+
+Algolia
+Alpine.js
+Angular
+Ant Design
+Apollo
+Astro
+Auth0
+Axios
+Babel
+Biome
+Bootstrap
+Bun
+CLS
+CORS
+Chakra
+Changesets
+Chromatic
+Chromium
+Claude
+Claude Code
+Clerk
+Cloudflare
+Confluence
+Contentful
+Copilot
+Core Web Vitals
+Cursor
+Cypress
+D3
+Datadog
+Deno
+Docusaurus
+Drizzle
+ESLint
+Electron
+Ember
+Emotion
+Expo
+Express
+Fallow
+Fastify
+Figma
+Firebase
+Framer Motion
+Gatsby
+GitHub
+GraphQL
+Hono
+Husky
+INP
+JSX
+JWT
+JavaScript
+Jest
+Jira
+Jotai
+Knip
+LCP
+LaunchDarkly
+Lerna
+Lighthouse
+Linear
+Lodash
+MSW
+Mantine
+Material UI
+Neon
+NestJS
+Netlify
+Next.js
+Node.js
+Nuxt
+Nx
+OAuth
+Parcel
+Pencilwrench
+PlanetScale
+Playwright
+PostCSS
+PostHog
+Preact
+Prettier
+Prisma
+Puppeteer
+Qwik
+Radix
+React
+React Native
+React Query
+React Testing Library
+Redux
+Remix
+Rollup
+SSR
+SWC
+Sanity
+Sass
+Sentry
+Server Components
+Slack
+Snowpack
+Solid
+SolidJS
+Storybook
+Stripe
+Stylelint
+Supabase
+Suspense
+Svelte
+SvelteKit
+TSX
+Tailwind
+Tailwind CSS
+TanStack Query
+Tauri
+Testing Library
+Three.js
+Turbopack
+Turborepo
+TypeScript
+Upstash
+VS Code
+Vercel
+Vite
+Vitest
+Vue
+WebAssembly
+WebSocket
+Webpack
+Wrangler
+Yarn
+Zod
+Zustand
+ast-grep
+date-fns
+esbuild
+htmx
+i18next
+jQuery
+lint-staged
+npm
+npx
+oxlint
+pnpm
+shadcn
+styled-components
+tRPC
+useCallback
+useContext
+useEffect
+useMemo
+useReducer
+useRef
+useState

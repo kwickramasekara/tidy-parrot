@@ -38,6 +38,7 @@ final class FakeRecorder: AudioRecording {
 @MainActor
 final class FakeEngine: TranscriptionEngine {
     var onStateChange: ((EngineState) -> Void)?
+    var onVocabularyChange: ((VocabularyStatus) -> Void)?
     var result: Result<Transcript, Error> = .success(Transcript(text: "hello", milliseconds: 42))
     private(set) var startCount = 0
     private(set) var stopCount = 0
@@ -56,6 +57,7 @@ final class FakeEngine: TranscriptionEngine {
     }
 
     func emit(_ state: EngineState) { onStateChange?(state) }
+    func emit(_ vocabulary: VocabularyStatus) { onVocabularyChange?(vocabulary) }
 }
 
 @MainActor

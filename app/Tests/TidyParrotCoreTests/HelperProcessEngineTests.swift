@@ -48,6 +48,26 @@ struct HelperProcessEngineTests {
         }
     }
 
+    @Test func vocabularyStatusIsForwardedFromReadyAndReplies() async throws {
+        let engine = Self.engine(
+            running: #"""
+                echo '{"ready": true, "vocabulary": {"terms": 0, "loaded_at": null, "error": null}}'
+                head -c 4 >/dev/null
+                echo '{"text": "hi", "ms": 1, "vocabulary": {"terms": 2, "loaded_at": 10, "error": null}}'
+                cat >/dev/null
+                """#)
+        var reported: [VocabularyStatus] = []
+        engine.onVocabularyChange = { reported.append($0) }
+        _ = await Self.firstSettledState(of: engine)
+        #expect(try await engine.transcribe(AudioClip(samples: [])).text == "hi")
+        #expect(
+            reported == [
+                VocabularyStatus(terms: 0, loadedAt: nil, problem: nil),
+                VocabularyStatus(terms: 2, loadedAt: Date(timeIntervalSince1970: 10), problem: nil),
+            ])
+        engine.stop()
+    }
+
     @Test func stopIsQuiet() async throws {
         let engine = Self.engine(running: #"echo '{"ready": true}'; cat >/dev/null"#)
         #expect(await Self.firstSettledState(of: engine) == .ready(cleanMode: false, loadMilliseconds: 0))

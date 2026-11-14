@@ -7,6 +7,8 @@ enum AppStatus: Equatable, Sendable {
     case transcribing
     case loading
     case ready(cleanMode: Bool)
+    /// Ready, but the vocabulary file's latest save was rejected and the previous terms are still in use.
+    case vocabularyProblem(String)
     case failed(String)
 
     /// Whether the menu bar should flag a problem, and a one-line description for the menu.
@@ -20,6 +22,7 @@ enum AppStatus: Equatable, Sendable {
         case .loading: (false, "Loading model…")
         case .ready(let clean):
             (false, "Ready: tap \(hotkey.displayName) to dictate" + (clean ? " (clean mode)" : ""))
+        case .vocabularyProblem(let problem): (true, "Vocabulary file not applied: \(problem)")
         case .failed(let reason): (true, reason)
         }
     }

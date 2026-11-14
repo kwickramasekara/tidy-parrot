@@ -42,11 +42,28 @@ struct HelperProtocolTests {
     @Test(arguments: [
         (
             #"{"ready": true, "load_ms": 512, "clean_mode": true}"#,
-            HelperProtocol.Message.ready(loadMilliseconds: 512, cleanMode: true)
+            HelperProtocol.Message.ready(loadMilliseconds: 512, cleanMode: true, vocabulary: nil)
         ),
-        (#"{"text": "Hi there.", "ms": 61}"#, .transcript(Transcript(text: "Hi there.", milliseconds: 61))),
+        (
+            #"{"text": "Hi there.", "ms": 61}"#,
+            .transcript(Transcript(text: "Hi there.", milliseconds: 61), vocabulary: nil)
+        ),
         (#"{"error": "model not found"}"#, .error("model not found")),
-        (#"{"text": ""}"#, .transcript(Transcript(text: "", milliseconds: 0))),
+        (#"{"text": ""}"#, .transcript(Transcript(text: "", milliseconds: 0), vocabulary: nil)),
+        (
+            #"{"ready": true, "load_ms": 5, "clean_mode": true, "vocabulary": {"terms": 0, "loaded_at": null, "error": null}}"#,
+            .ready(
+                loadMilliseconds: 5, cleanMode: true,
+                vocabulary: VocabularyStatus(terms: 0, loadedAt: nil, problem: nil))
+        ),
+        (
+            #"{"text": "Hi.", "ms": 9, "vocabulary": {"terms": 154, "loaded_at": 1000.5, "error": "line 3 has no letters or digits"}}"#,
+            .transcript(
+                Transcript(text: "Hi.", milliseconds: 9),
+                vocabulary: VocabularyStatus(
+                    terms: 154, loadedAt: Date(timeIntervalSince1970: 1000.5),
+                    problem: "line 3 has no letters or digits"))
+        ),
     ])
     func decodesMessages(line: String, expected: HelperProtocol.Message) {
         #expect(HelperProtocol.decode(line) == expected)
@@ -54,6 +71,11 @@ struct HelperProtocolTests {
 
     @Test func errorWinsOverOtherFields() {
         #expect(HelperProtocol.decode(#"{"text": "x", "error": "bad"}"#) == .error("bad"))
+    }
+
+    @Test func malformedVocabularyRejectsTheLine() {
+        // A missing "terms" is a protocol bug; better an unreadable reply than a made-up count.
+        #expect(HelperProtocol.decode(#"{"text": "x", "vocabulary": {"loaded_at": 1}}"#) == nil)
     }
 
     @Test(arguments: ["", "not json", "[1, 2]", "{}", #"{"ms": 5}"#])
@@ -168,9 +190,16 @@ struct AppStatusTests {
         (.loading, false),
         (.ready(cleanMode: true), false),
         (.ready(cleanMode: false), false),
+        (.vocabularyProblem("line 3 has no letters or digits"), true),
     ])
     func onlyProblemsNeedAttention(status: AppStatus, needsAttention: Bool) {
         #expect(status.presentation(hotkey: .function).needsAttention == needsAttention)
+    }
+
+    @Test func vocabularyProblemSaysTheFileWasntApplied() {
+        #expect(
+            AppStatus.vocabularyProblem("line 3 has no letters or digits").presentation(hotkey: .function).text
+                == "Vocabulary file not applied: line 3 has no letters or digits")
     }
 
     @Test func failureShowsReason() {
@@ -192,6 +221,32 @@ struct DiagnosticsTests {
                 "Microphone: allowed",
                 "Accessibility: allowed",
             ])
+    }
+
+    @Test(arguments: [
+        (VocabularyStatus(terms: 0, loadedAt: nil, problem: nil), ["Vocabulary: loading…"]),
+        (VocabularyStatus(terms: 0, loadedAt: Date(), problem: nil), ["Vocabulary: off (file empty or missing)"]),
+        (
+            VocabularyStatus(terms: 2, loadedAt: nil, problem: "line 3 has no letters or digits"),
+            ["Vocabulary: loading…", "Vocabulary file not applied: line 3 has no letters or digits"]
+        ),
+    ])
+    func vocabularyLinesSitBeforePermissions(vocabulary: VocabularyStatus, expected: [String]) {
+        let diagnostics = Diagnostics(
+            engine: .ready(cleanMode: true, loadMilliseconds: 1), lastTiming: nil, vocabulary: vocabulary,
+            isMicrophoneAuthorized: true, isAccessibilityTrusted: true)
+        #expect(Array(diagnostics.lines.dropFirst(3).dropLast(2)) == expected)
+    }
+
+    @Test func loadedVocabularyShowsCountAndTime() {
+        let loadedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let diagnostics = Diagnostics(
+            engine: .ready(cleanMode: true, loadMilliseconds: 1), lastTiming: nil,
+            vocabulary: VocabularyStatus(terms: 154, loadedAt: loadedAt, problem: nil),
+            isMicrophoneAuthorized: true, isAccessibilityTrusted: true)
+        #expect(
+            diagnostics.lines.contains(
+                "Vocabulary: 154 terms, loaded \(loadedAt.formatted(date: .omitted, time: .standard))"))
     }
 
     /// Load time comes from the helper's ready message, so there's nothing to show before or without one.
@@ -489,5 +544,27 @@ struct LevelBarsViewTests {
         view.start { 1 }
         view.frame(at: 60)  // a minute later: must not be treated as one long frame
         #expect(view.bars == LevelBars(count: 4))
+    }
+}
+
+struct VocabularyFileTests {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+
+    @Test func createsAnEmptyFileWhenMissing() throws {
+        let url = folder.appendingPathComponent("vocabulary.txt")
+        #expect(VocabularyFile.prepareForEditing(at: url) == url)
+        #expect(try Data(contentsOf: url).isEmpty)
+    }
+
+    @Test func leavesAnExistingFileAlone() throws {
+        let url = folder.appendingPathComponent("vocabulary.txt")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data("React\n".utf8).write(to: url)
+        _ = VocabularyFile.prepareForEditing(at: url)
+        #expect(try String(contentsOf: url, encoding: .utf8) == "React\n")
+    }
+
+    @Test func liveFileIsInApplicationSupport() {
+        #expect(VocabularyFile.url.path.hasSuffix("Library/Application Support/TidyParrot/vocabulary.txt"))
     }
 }

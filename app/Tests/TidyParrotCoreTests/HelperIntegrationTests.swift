@@ -41,6 +41,64 @@ struct HelperIntegrationTests {
         await #expect(throws: TranscriptionError.notRunning) { try await engine.transcribe(clip) }
     }
 
+    /// First launch seeds the default list; a bad save keeps it and is reported; fixing the file clears the problem.
+    /// Uses a temporary folder, never the real vocabulary.
+    @Test func seedsWatchesAndReportsTheVocabulary() async throws {
+        let wav = try #require(ProcessInfo.processInfo.environment["TP_INTEGRATION_WAV"])
+        let clip = try Self.loadClip(URL(fileURLWithPath: wav))
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let file = folder.appendingPathComponent("vocabulary.txt")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let engine = HelperProcessEngine(
+            configuration: .init(
+                python: Self.repoRoot.appendingPathComponent("helper/.venv/bin/python").path,
+                script: Self.repoRoot.appendingPathComponent("helper/tidy_parrot_helper.py").path,
+                arguments: ["--vocabulary", file.path]))
+        var latest: VocabularyStatus?
+        engine.onVocabularyChange = { latest = $0 }
+        defer { engine.stop() }
+
+        guard case .ready = await Self.waitForReadyOrFailure(engine) else {
+            Issue.record("helper didn't start")
+            return
+        }
+        let defaults = try Self.termCount(Self.repoRoot.appendingPathComponent("helper/default_vocabulary.txt"))
+        try await Self.transcribe(clip, with: engine) { latest?.loadedAt != nil }
+        #expect(latest == VocabularyStatus(terms: defaults, loadedAt: latest?.loadedAt, problem: nil))
+        #expect(try Self.termCount(file) == defaults)
+
+        try Data("React\n---\n".utf8).write(to: file, options: .atomic)
+        try await Self.transcribe(clip, with: engine) { latest?.problem != nil }
+        #expect(latest?.problem == "line 2 has no letters or digits")
+        #expect(latest?.terms == defaults)
+
+        try Data("React\nVue\n".utf8).write(to: file, options: .atomic)
+        try await Self.transcribe(clip, with: engine) { latest?.terms == 2 }
+        #expect(latest?.problem == nil)
+    }
+
+    /// The vocabulary status only arrives with replies, so keep dictating until it shows what's expected.
+    private static func transcribe(
+        _ clip: AudioClip, with engine: HelperProcessEngine, until condition: () -> Bool
+    ) async throws {
+        let deadline = ContinuousClock.now + .seconds(15)
+        while !condition() {
+            guard ContinuousClock.now < deadline else {
+                Issue.record("vocabulary condition not met within 15 s")
+                return
+            }
+            _ = try await engine.transcribe(clip)
+            try await Task.sleep(for: .milliseconds(250))
+        }
+    }
+
+    private static func termCount(_ url: URL) throws -> Int {
+        try String(contentsOf: url, encoding: .utf8).split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("#") }
+            .count
+    }
+
     private static func waitForReadyOrFailure(_ engine: HelperProcessEngine) async -> EngineState {
         await withCheckedContinuation { continuation in
             var resumed = false

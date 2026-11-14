@@ -7,6 +7,9 @@ recording doesn't start. Apps that don't say what has focus, such as Slack or VS
 dictation went nowhere, click into the field and choose **Paste Last Dictation** from the menu. The last dictation
 is kept in memory only, until you quit.
 
+Tech terms come out spelled the way you write them ("Pencilwrench", "PostHog", "Next.js", "useEffect") because of a
+vocabulary list. See [Vocabulary](#vocabulary).
+
 macOS also acts on a plain fn tap (emoji picker, input source or Apple Dictation), and Tidy Parrot can't block that.
 Set System Settings → Keyboard → **Press 🌐 key to** → **Do Nothing**.
 
@@ -49,6 +52,32 @@ help, because the list entry still points at the old build. To keep the grant, c
 
 To use a different certificate, such as an Apple Development one, run `make run SIGN_IDENTITY="its name"`.
 
+## Vocabulary
+
+Choose **Edit Vocabulary…** in the menu to open `~/Library/Application Support/TidyParrot/vocabulary.txt`. It holds
+one term per line, spelled and capitalised the way you want it typed. Lines starting with `#` are ignored. It starts
+with about 150 front-end terms (frameworks, build tools, React hooks, services). Save it and the change applies
+within a few seconds, with no restart.
+
+The list is used in two ways:
+
+- **Boost:** while decoding, the model is nudged towards your terms when what it hears is close.
+- **Respelling:** after decoding, words that spell a term once spaces, case and punctuation are ignored are joined
+  and recased: "Pencil Wrench" → "Pencilwrench", "next JS" → "Next.js", "use effect" → "useEffect". Terms that are
+  also everyday words ("React", "Fallow", "Cypress") are skipped here, so "we need to react quickly" stays as said.
+
+You don't list misspellings. What the list can't fix is a term that sounds like other words, such as "Qwik" and
+"quick", or "CORS" and "course".
+
+If a save can't be used (a line with no letters or digits, or a file that isn't UTF-8), the menu bar shows ⚠️ with
+the line number, and the previous list stays in effect until you fix it. Empty the file, or delete it, to turn the
+vocabulary off. To get the default list back, quit, delete the `TidyParrot` folder, and relaunch.
+Option-click the icon to see how many terms are loaded and when.
+
+Measured with synthetic voices on held-out sentences, with 150 front-end terms: exactly right terms went from 43% to
+76%, with no false hits on 30 trap sentences, and no added latency once the list is loaded. Expect lower numbers with
+a real voice and mic. The list builds in about a second after the model loads; dictation works without it meanwhile.
+
 ## How it works
 
 ```
@@ -64,7 +93,9 @@ fn tap  ─► resample to 16 kHz mono ─► helper over stdin ─► text over
   missed, since password fields hide key events from other apps.
 - `helper/`: `tidy_parrot_helper.py` loads the 8-bit model with clean mode once and warms it up, then answers one
   clip at a time over the protocol in `wire_protocol.py`. If the app quits or crashes, the helper's stdin closes and
-  it exits. `vendor/fluid_speech_mlx.py` is FluidVoice's loader from the model repo, unmodified.
+  it exits. `vendor/fluid_speech_mlx.py` is FluidVoice's loader from the model repo, unmodified. `vocabulary.py`
+  reads and watches the vocabulary file, `boost_table.py` turns it into a per-token bonus table, `decoding.py` is the
+  greedy decoder that applies it, and `snap.py` respells the result.
 
 See [AGENTS.md](AGENTS.md) for the full architecture, conventions and where to add features.
 
@@ -96,7 +127,9 @@ helper/.venv/bin/python helper/tidy_parrot_helper.py --file some.wav [--verbatim
   "we should we should".
 - Paste uses key code 9 (V on QWERTY). Other keyboard layouts may need a different code.
 - Recordings stop at 3 minutes and aren't split into chunks. Untested past a minute or so.
-- `parakeet-mlx` is pinned, because the vendored loader patches its internals.
+- `parakeet-mlx` is pinned, because the vendored loader patches its internals, `decoding.py` copies its greedy loop,
+  and `boost_table.py` relies on its booster's internal state.
+- The vocabulary is tested with about 150 terms. Much longer lists build more slowly and haven't been measured.
 
 ## Credits
 

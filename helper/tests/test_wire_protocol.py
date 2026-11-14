@@ -14,9 +14,9 @@ def frame(samples) -> bytes:
     return struct.pack("<I", len(data)) + data
 
 
-def run_serve(stdin_bytes: bytes, transcribe):
+def run_serve(stdin_bytes: bytes, transcribe, vocabulary=None):
     out, logs = io.StringIO(), []
-    serve(io.BytesIO(stdin_bytes), out, transcribe, logs.append)
+    serve(io.BytesIO(stdin_bytes), out, transcribe, logs.append, vocabulary)
     return [json.loads(line) for line in out.getvalue().splitlines()], logs
 
 
@@ -66,6 +66,22 @@ class ServeTests(unittest.TestCase):
         replies, _ = run_serve(bad + frame([0.0, 0.0]), lambda s: f"{s.size} samples")
         self.assertIn("error", replies[0])
         self.assertEqual(replies[1]["text"], "2 samples")
+
+    def test_transcripts_carry_the_vocabulary_status_when_given(self):
+        statuses = iter([{"terms": 0, "loaded_at": None, "error": None}, {"terms": 3, "loaded_at": 1.5, "error": None}])
+        replies, _ = run_serve(frame([0.0]) + frame([0.0]), lambda s: "ok", lambda: next(statuses))
+        self.assertEqual([r["vocabulary"]["terms"] for r in replies], [0, 3])
+
+    def test_no_vocabulary_field_without_a_vocabulary(self):
+        replies, _ = run_serve(frame([0.0]), lambda s: "ok")
+        self.assertNotIn("vocabulary", replies[0])
+
+    def test_error_replies_stay_bare(self):
+        def boom(samples):
+            raise RuntimeError("boom")
+
+        replies, _ = run_serve(frame([0.0]), boom, lambda: {"terms": 1, "loaded_at": 1.0, "error": None})
+        self.assertEqual(replies, [{"error": "boom"}])
 
     def test_exits_cleanly_when_stdin_closes(self):
         replies, logs = run_serve(b"", lambda s: "unused")

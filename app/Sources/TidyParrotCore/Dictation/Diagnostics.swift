@@ -11,6 +11,8 @@ struct Diagnostics: Equatable, Sendable {
     var engine: EngineState
     /// The last successful transcription.
     var lastTiming: Timing?
+    /// Nil until the helper first reports it.
+    var vocabulary: VocabularyStatus?
     var isMicrophoneAuthorized: Bool
     var isAccessibilityTrusted: Bool
 
@@ -34,10 +36,23 @@ struct Diagnostics: Equatable, Sendable {
         } else {
             lines.append("Last dictation: none yet")
         }
+        if let vocabulary { lines += Self.describe(vocabulary) }
         lines.append("Microphone: \(Self.describe(isMicrophoneAuthorized))")
         lines.append("Accessibility: \(Self.describe(isAccessibilityTrusted))")
         return lines
     }
 
     private static func describe(_ granted: Bool) -> String { granted ? "allowed" : "not allowed" }
+
+    private static func describe(_ vocabulary: VocabularyStatus) -> [String] {
+        let state =
+            if let loadedAt = vocabulary.loadedAt {
+                vocabulary.terms == 0
+                    ? "off (file empty or missing)"
+                    : "\(vocabulary.terms) terms, loaded \(loadedAt.formatted(date: .omitted, time: .standard))"
+            } else {
+                "loading…"
+            }
+        return ["Vocabulary: \(state)"] + (vocabulary.problem.map { ["Vocabulary file not applied: \($0)"] } ?? [])
+    }
 }

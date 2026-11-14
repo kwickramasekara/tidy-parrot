@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import TidyParrotCore
@@ -131,6 +132,51 @@ struct DictationControllerTests {
         hotkey.send(.toggle)
         await controller.finishRecording()?.value
         #expect(controller.diagnostics.lastTiming == .init(audioDuration: 1.0, milliseconds: 42))
+    }
+
+    // MARK: Vocabulary
+
+    @Test func rejectedVocabularySaveIsFlaggedUntilFixed() {
+        let controller = makeReadyController()
+        var seen: [AppStatus] = []
+        controller.onStatusChange = { seen.append($0) }
+
+        engine.emit(VocabularyStatus(terms: 154, loadedAt: Date(), problem: "line 3 has no letters or digits"))
+        #expect(controller.status == .vocabularyProblem("line 3 has no letters or digits"))
+        #expect(controller.diagnostics.vocabulary?.terms == 154)
+
+        engine.emit(VocabularyStatus(terms: 154, loadedAt: Date(), problem: nil))
+        #expect(controller.status == .ready(cleanMode: true))
+        #expect(seen.count == 2)
+    }
+
+    @Test func vocabularyProblemDoesntHideBiggerOnes() {
+        let controller = makeReadyController()
+        engine.emit(VocabularyStatus(terms: 1, loadedAt: Date(), problem: "bad line"))
+        engine.emit(.failed("Helper stopped (status 1)"))
+        #expect(controller.status == .failed("Helper stopped (status 1)"))
+
+        engine.emit(.ready(cleanMode: true, loadMilliseconds: 1))
+        hotkey.send(.toggle)
+        #expect(controller.status == .listening)
+    }
+
+    @Test func vocabularyProblemStillAllowsDictation() async {
+        let controller = makeReadyController()
+        engine.emit(VocabularyStatus(terms: 1, loadedAt: Date(), problem: "bad line"))
+        hotkey.send(.toggle)
+        await controller.finishRecording()?.value
+        #expect(inserter.inserted == ["hello "])
+    }
+
+    @Test func repeatedVocabularyReportsDontRepublish() {
+        let controller = makeReadyController()
+        var published = 0
+        controller.onStatusChange = { _ in published += 1 }
+        let status = VocabularyStatus(terms: 3, loadedAt: Date(timeIntervalSince1970: 5), problem: nil)
+        engine.emit(status)
+        engine.emit(status)
+        #expect(published == 1)
     }
 
     @Test func diagnosticsReflectEngineStateAndLivePermissions() {

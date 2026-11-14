@@ -10,6 +10,7 @@ final class HelperProcessEngine: TranscriptionEngine {
     }
 
     var onStateChange: ((EngineState) -> Void)?
+    var onVocabularyChange: ((VocabularyStatus) -> Void)?
 
     private let configuration: Configuration
     private var connection: HelperConnection?
@@ -64,7 +65,9 @@ final class HelperProcessEngine: TranscriptionEngine {
             connection.send(HelperProtocol.frame(clip)) { continuation.resume(with: $0) }
         }
         switch message {
-        case .transcript(let transcript): return transcript
+        case .transcript(let transcript, let vocabulary):
+            if let vocabulary { onVocabularyChange?(vocabulary) }
+            return transcript
         case .error(let text): throw TranscriptionError.engine(text)
         case .ready: throw TranscriptionError.invalidReply
         }
@@ -74,9 +77,10 @@ final class HelperProcessEngine: TranscriptionEngine {
     private func handleFirstLine(_ line: String?, from started: HelperConnection) {
         guard let line, started === connection else { return }  // replaced or stopped meanwhile
         switch HelperProtocol.decode(line) {
-        case .ready(let loadMilliseconds, let cleanMode):
+        case .ready(let loadMilliseconds, let cleanMode, let vocabulary):
             Log.write("helper ready in \(loadMilliseconds) ms, clean mode \(cleanMode)")
             onStateChange?(.ready(cleanMode: cleanMode, loadMilliseconds: loadMilliseconds))
+            if let vocabulary { onVocabularyChange?(vocabulary) }
         case .error(let text):
             // e.g. model missing. Disconnect first so the exit that follows doesn't replace this with a status code.
             fail(text)

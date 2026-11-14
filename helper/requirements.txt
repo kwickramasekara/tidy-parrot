@@ -1,6 +1,9 @@
-# Pinned: vendor/fluid_speech_mlx.py patches parakeet-mlx internals, so upgrades can break it silently.
+# Pinned: vendor/fluid_speech_mlx.py patches parakeet-mlx internals, so upgrades can break it silently. decoding.py
+# copies its TDT greedy loop and boost_table.py relies on its booster's state layout, so recheck both on any bump.
 parakeet-mlx==0.7.0
 mlx==0.32.4
 mlx-metal==0.32.4
 huggingface_hub==2.4.0
 numpy==2.5.4
+# Reloads the vocabulary file on save, with FSEvents rather than polling.
+watchfiles==1.3.0

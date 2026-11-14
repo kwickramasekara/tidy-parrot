@@ -1,8 +1,11 @@
 """The stdin/stdout protocol between the Swift app and this helper. No model or MLX imports, so it's testable alone.
 
-  stdout, once at start: {"ready": true, "load_ms": ..., "clean_mode": ...}   or {"error": "..."} then exit
+  stdout, once at start: {"ready": true, "load_ms": ..., "clean_mode": ..., "vocabulary": V}   or {"error": "..."} then exit
   stdin, per clip:       4-byte little-endian length N, then N bytes of float32 mono PCM at 16 kHz
-  stdout, per clip:      {"text": "...", "ms": ...}                           or {"error": "..."}
+  stdout, per clip:      {"text": "...", "ms": ..., "vocabulary": V}                          or {"error": "..."}
+
+  V, optional: {"terms": int, "loaded_at": unix seconds or null while the first load runs, "error": str or null}.
+  It rides on replies because the app reads exactly one line per clip, so the helper can't speak unprompted.
 
 The Swift side lives in app/Sources/TidyParrotCore/Transcription/HelperProtocol.swift; change both together.
 """
@@ -19,6 +22,7 @@ HEADER = struct.Struct("<I")
 
 Transcribe = Callable[[np.ndarray], str]
 Log = Callable[[str], None]
+Status = Callable[[], dict]
 
 
 def read_exact(stream: BinaryIO, n: int) -> bytes | None:
@@ -45,7 +49,7 @@ def write_reply(out: TextIO, obj: dict) -> None:
     out.flush()
 
 
-def serve(stdin: BinaryIO, out: TextIO, transcribe: Transcribe, log: Log) -> None:
+def serve(stdin: BinaryIO, out: TextIO, transcribe: Transcribe, log: Log, vocabulary: Status | None = None) -> None:
     """Answers clips one at a time until stdin closes (the app quit or crashed)."""
     while (payload := read_payload(stdin)) is not None:
         try:
@@ -55,7 +59,10 @@ def serve(stdin: BinaryIO, out: TextIO, transcribe: Transcribe, log: Log) -> Non
             text = transcribe(samples)
             ms = round((time.perf_counter() - start) * 1000)
             log(f"{samples.size / SAMPLE_RATE:.1f}s audio -> {ms} ms")
-            write_reply(out, {"text": text, "ms": ms})
+            reply = {"text": text, "ms": ms}
+            if vocabulary is not None:
+                reply["vocabulary"] = vocabulary()
+            write_reply(out, reply)
         except Exception as e:  # keep serving; one bad clip shouldn't kill the helper
             log(f"error: {e!r}")
             write_reply(out, {"error": str(e)})
