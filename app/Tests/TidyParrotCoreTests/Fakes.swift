@@ -10,28 +10,65 @@ final class FakeHotkey: HotkeySource {
 
     func start() { started = true }
     func send(_ event: HotkeyEvent) { onEvent?(event) }
+    /// What the detector sends for a plain fn tap.
+    func tap() {
+        send(.pressBegan)
+        send(.toggle)
+    }
 }
 
+/// Like the real recorder, each call takes effect when it's made and results arrive later on the main actor.
 @MainActor
 final class FakeRecorder: AudioRecording {
-    var clipToReturn = AudioClip(samples: [Float](repeating: 0, count: 16_000))
-    var startError: Error?
-    private(set) var isRecording = false
-    private(set) var cancelCount = 0
-
-    func start() throws {
-        if let startError { throw startError }
-        isRecording = true
+    enum Call: Equatable {
+        case warmUp, start, stop, cancel
     }
 
-    func stop() -> AudioClip {
-        isRecording = false
-        return clipToReturn
+    var clipToReturn = AudioClip(samples: [Float](repeating: 0, count: 16_000))
+    var startError: Error?
+    /// False stands in for an input that's skipped, like Bluetooth.
+    var warmUpOpens = true
+    /// Holds `start`'s result until `releaseStart()`, to test what arrives while the mic is still opening.
+    var holdStart = false
+    private(set) var calls: [Call] = []
+    private(set) var isOpen = false
+    private var heldStart: (() -> Void)?
+
+    var cancelCount: Int { calls.filter { $0 == .cancel }.count }
+
+    func warmUp() {
+        calls.append(.warmUp)
+        if warmUpOpens { isOpen = true }
+    }
+
+    func start(_ opened: @escaping @MainActor @Sendable (Result<Bool, any Error>) -> Void) {
+        calls.append(.start)
+        let result: Result<Bool, any Error>
+        if let startError {
+            result = .failure(startError)
+        } else {
+            result = .success(isOpen)
+            isOpen = true
+        }
+        let deliver = { opened(result) }
+        if holdStart { heldStart = deliver } else { Task { deliver() } }
+    }
+
+    func releaseStart() {
+        heldStart?()
+        heldStart = nil
+    }
+
+    func stop(_ stopped: @escaping @MainActor @Sendable (AudioClip) -> Void) {
+        calls.append(.stop)
+        isOpen = false
+        let clip = clipToReturn
+        Task { stopped(clip) }
     }
 
     func cancel() {
-        isRecording = false
-        cancelCount += 1
+        calls.append(.cancel)
+        isOpen = false
     }
 }
 

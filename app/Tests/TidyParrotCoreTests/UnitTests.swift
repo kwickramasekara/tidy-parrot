@@ -1,4 +1,5 @@
 import AppKit
+import CoreAudio
 import Foundation
 import Testing
 
@@ -97,26 +98,31 @@ struct TapToToggleDetectorTests {
     /// Each row feeds a key sequence to a fresh detector and lists the event expected after each input.
     @Test(
         arguments: [
-            // A plain tap toggles on release; a repeated flags event while held does nothing.
-            ([.fnDown, .fnDown, .fnUp, .fnUp], [nil, nil, .toggle, nil]),
-            // Every later tap toggles again.
-            ([.fnDown, .fnUp, .fnDown, .fnUp], [nil, .toggle, nil, .toggle]),
-            // fn+← is a shortcut, not a tap, and it doesn't spoil the next tap.
-            ([.fnDown, .key(123), .fnUp, .fnDown, .fnUp], [nil, nil, nil, nil, .toggle]),
+            // A press begins on key-down and a plain tap toggles on release; a repeated flags event does nothing.
+            ([.fnDown, .fnDown, .fnUp, .fnUp], [.pressBegan, nil, .toggle, nil]),
+            // Every later tap begins and toggles again.
+            ([.fnDown, .fnUp, .fnDown, .fnUp], [.pressBegan, .toggle, .pressBegan, .toggle]),
+            // fn+← is a shortcut, not a tap: abandoned at the arrow, and it doesn't spoil the next tap.
+            ([.fnDown, .key(123), .fnUp, .fnDown, .fnUp], [.pressBegan, .pressAbandoned, nil, .pressBegan, .toggle]),
+            // A held arrow repeats, but the press is abandoned only once.
+            (
+                [.fnDown, .key(123), .key(123), .key(123), .key(123), .key(123), .fnUp],
+                [.pressBegan, .pressAbandoned, nil, nil, nil, nil, nil]
+            ),
             // Left ⌘ pressed and released while fn is held.
             (
                 [
                     .fnDown, .flags(keyCode: 55, modifierFlags: fnFlag | 0x10_0008),
                     .flags(keyCode: 55, modifierFlags: fnFlag), .fnUp,
                 ],
-                [nil, nil, nil, nil]
+                [.pressBegan, .pressAbandoned, nil, nil]
             ),
             // Right ⌥, the old hotkey, does nothing.
             ([.flags(keyCode: 61, modifierFlags: 0x8_0040), .flags(keyCode: 61, modifierFlags: 0)], [nil, nil]),
             // Esc cancels; other keys don't.
             ([.key(escape), .key(0)], [.cancel, nil]),
-            // fn+Esc is a shortcut, not a cancel.
-            ([.fnDown, .key(escape), .fnUp], [nil, nil, nil]),
+            // fn+Esc is a shortcut, not a cancel: it abandons the press.
+            ([.fnDown, .key(escape), .fnUp], [.pressBegan, .pressAbandoned, nil]),
         ] as [([Input], [HotkeyEvent?])])
     func detects(inputs: [Input], expected: [HotkeyEvent?]) {
         var detector = TapToToggleDetector(key: .function)
@@ -129,6 +135,23 @@ struct TapToToggleDetectorTests {
             }
         }
         #expect(events == expected)
+    }
+}
+
+struct AudioInputTransportTests {
+    @Test(arguments: [
+        (kAudioDeviceTransportTypeBuiltIn, true),
+        (kAudioDeviceTransportTypeUSB, true),
+        (kAudioDeviceTransportTypeDisplayPort, true),
+        (kAudioDeviceTransportTypeBluetooth, false),
+        (kAudioDeviceTransportTypeBluetoothLE, false),
+    ])
+    func warmsUpOnlyNonBluetoothInputs(transportType: UInt32, allowed: Bool) {
+        #expect(AudioInputTransport.allowsWarmUp(transportType: transportType) == allowed)
+    }
+
+    @Test func unknownInputIsNotWarmedUp() {
+        #expect(!AudioInputTransport.allowsWarmUp(transportType: nil))
     }
 }
 

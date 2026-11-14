@@ -40,7 +40,7 @@ struct AccessibilityFocusedInput: FocusedInputChecking {
         if let role, !accepted {
             Log.write("no text input: focused \(role) in \(Self.bundleID(of: focused))")
         } else if role == nil {
-            Log.write("focus unknown in \(Self.bundleID(of: focused)); recording anyway")
+            Log.write("focus unknown in \(Self.bundleID(of: focused)); allowed")
         }
         return accepted
     }

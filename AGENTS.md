@@ -28,7 +28,7 @@ the Swift commands outside your sandbox.
 ## Architecture
 
 ```
-GlobalHotkeyMonitor ─toggle/cancel────────► DictationController ─► MicrophoneRecorder  (AVAudioEngine → 16 kHz clip)
+GlobalHotkeyMonitor ─press/toggle/cancel──► DictationController ─► MicrophoneRecorder  (AVAudioEngine → 16 kHz clip)
                                                    │              ─► TranscriptionEngine (HelperProcessEngine ⇄ Python)
                                                    │              ─► PasteboardTextInserter (clipboard + ⌘V, then restore)
                                                    └─ AppStatus / messages ─► StatusMenu, RecordingIndicator
@@ -37,15 +37,20 @@ GlobalHotkeyMonitor ─toggle/cancel────────► DictationControl
 - **`app/Sources/TidyParrot/main.swift`**: starts `NSApplication`. Nothing else goes here.
 - **`app/Sources/TidyParrotCore/`**: all app code, in one folder per concern:
   - `App/`: `AppDelegate` is the **composition root**, the only place that creates live implementations.
-  - `Dictation/`: `DictationController` owns all state and runs the pipeline. `DictationSettings` holds its tunables.
+  - `Dictation/`: `DictationController` owns all state and runs the pipeline. Its private `Phase` (idle, warming,
+    starting, recording) is the one source of truth for where a dictation is. `DictationSettings` holds its tunables.
     `AppStatus` is the derived status and its menu text. `Diagnostics` is what Option-clicking the menu bar icon shows.
   - `Audio/`: `AudioRecording` protocol, `MicrophoneRecorder`, `Resampler`, and `AudioClip` (mono float32 at 16 kHz).
+    The recorder does all engine work on its own serial queue, in call order, because opening a mic blocks for up to
+    0.7 s. `AudioInputTransport` keeps fn key-down warm-up off Bluetooth inputs.
     `AudioLevel` maps loudness to 0–1, and `LevelMeter` turns the tap's audio into one level per 50 ms for the
     on-screen meter.
   - `Transcription/`: `TranscriptionEngine` protocol and `HelperProcessEngine`, the Python subprocess. Also
     `HelperProtocol`, the wire format, and `UnavailableEngine`, a stand-in used when the Info.plist keys from
     `scripts/build.sh` are missing. `VocabularyStatus` is what the engine reports about the vocabulary file.
-  - `Input/`: `HotkeySource` protocol, `GlobalHotkeyMonitor` (NSEvent), and `TapToToggleDetector`, the tap logic.
+  - `Input/`: `HotkeySource` protocol, `GlobalHotkeyMonitor` (NSEvent), and `TapToToggleDetector`, the tap logic. It
+    sends `pressBegan` on fn key-down, then `toggle` for a tap or `pressAbandoned` once another key shows it's a
+    shortcut.
   - `Output/`: `TextInserting` protocol and `PasteboardTextInserter`. `FocusedInputChecking` protocol and
     `AccessibilityFocusedInput`, which refuses recording only for roles that never take text, and fails open
     otherwise. `SystemSounds` maps each `FeedbackSound` to a built-in macOS sound.
@@ -148,5 +153,8 @@ When stdin closes, the helper exits. The helper writes logs to stderr, which goe
 - `watchfiles` prints debug output to the real stdout, which is the protocol channel, so `debug=False` stays explicit.
 - NSEvent monitors only observe, so fn and Esc still reach macOS and the focused app. A plain fn tap also triggers
   System Settings → Keyboard → "Press 🌐 key to" unless that's set to "Do Nothing".
+- The mic opens on every fn key-down while idle, so fn shortcuts briefly light the macOS mic indicator. Esc while fn
+  is held is a shortcut (`pressAbandoned`), not a `cancel`.
+- Tests write to the real log, so `grep "start:"` shows their 0 ms lines too.
 - Agents can't fully exercise the hotkey, mic and paste. To change them, a human has to run `make run` and dictate
   into a text field. Say so when you hand off a change that touches them.

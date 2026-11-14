@@ -6,6 +6,8 @@ struct DictationSettings: Sendable {
     /// Stops a recording that was left running or whose stopping tap was missed (a password field hides key events
     /// from global monitors), so the mic can't stay open indefinitely.
     var maximumClipDuration: Duration = .seconds(180)
+    /// Closes a mic opened on fn key-down if no tap follows: fn held on its own, or a key-up a password field hid.
+    var warmUpLimit: Duration = .seconds(2)
     /// Appended to each dictation so consecutive ones don't run together ("Friday.Please").
     var trailingText = " "
 }
@@ -42,8 +44,22 @@ final class DictationController {
     private let settings: DictationSettings
     private var engineState = EngineState.loading
     private var hasAccessibility = false
+    /// Where the controller is in a dictation. Transcriptions run alongside this (`inFlight`), so they aren't a phase.
+    private enum Phase {
+        case idle
+        /// fn is down on its own and the mic is opening, but the press may yet be a shortcut, so nothing shows.
+        /// `limit` closes the mic if no tap follows.
+        case warming(pressedAt: ContinuousClock.Instant, limit: Task<Void, Never>)
+        /// A tap is in and the mic is opening; the chime waits until it's open. `attempt` tells this start apart from
+        /// one that was discarded, whose reply may still arrive. `pressedAt` is nil when there was no warm-up.
+        case starting(attempt: Int, pressedAt: ContinuousClock.Instant?, releasedAt: ContinuousClock.Instant)
+        /// The mic is open and the pill is showing. `limit` stops a recording that was left running.
+        case recording(limit: Task<Void, Never>)
+    }
+
+    private var phase = Phase.idle
+    private var attempts = 0
     private var inFlight = 0
-    private var recordingLimit: Task<Void, Never>?
     /// Kept in memory only, never persisted, so it's gone on quit.
     private var lastDictation: String?
     private var lastTiming: Diagnostics.Timing?
@@ -56,7 +72,7 @@ final class DictationController {
 
     var status: AppStatus {
         if !hasAccessibility { return .needsAccessibility }
-        if deps.recorder.isRecording { return .listening }
+        if case .recording = phase { return .listening }
         if inFlight > 0 { return .transcribing }
         switch engineState {
         case .loading: return .loading
@@ -134,74 +150,139 @@ final class DictationController {
     }
 
     private func handle(_ event: HotkeyEvent) {
-        switch event {
-        case .toggle:
-            if deps.recorder.isRecording { finishRecording() } else { startRecording() }
-        case .cancel: cancelRecording()
+        switch (event, phase) {
+        case (.pressBegan, .idle): warmUp()
+        case (.pressBegan, _): break
+        case (.pressAbandoned, .warming): discard()
+        case (.pressAbandoned, _): break
+        // No warm-up to commit (refused, timed out, or its key-down was missed): start as a tap always has.
+        case (.toggle, .idle): startRecording()
+        case (.toggle, .warming(let pressed, let limit)):
+            limit.cancel()
+            commit(pressedAt: pressed)
+        // A second tap before the mic opened: nothing was heard and no chime has played, so end without a sound.
+        case (.toggle, .starting): discard()
+        case (.toggle, .recording): finishRecording()
+        case (.cancel, _): cancelRecording()
         }
     }
 
     private func startRecording() {
+        let released = ContinuousClock.now
+        if let refusal = refusal() {
+            present(refusal)
+            return
+        }
+        begin(pressedAt: nil, releasedAt: released)
+    }
+
+    /// Opens the mic while fn is still down, so it's ready sooner. Silent: a shortcut looks the same until its other
+    /// key arrives, and a refused press leaves the refusal for its tap to report.
+    private func warmUp() {
+        let pressed = ContinuousClock.now
+        guard refusal() == nil else { return }
+        deps.recorder.warmUp()
+        phase = .warming(
+            pressedAt: pressed, limit: after(settings.warmUpLimit) { [weak self] in self?.warmUpExpired() })
+    }
+
+    private func warmUpExpired() {
+        guard case .warming = phase else { return }
+        discard()
+    }
+
+    private func commit(pressedAt pressed: ContinuousClock.Instant) {
+        let released = ContinuousClock.now
+        // The helper may have stopped since key-down. Focus and permission were checked then, moments ago.
         guard case .ready = engineState else {
-            deps.play(.alert)
+            discard()
+            present(.engineNotReady)
             return
         }
-        let clock = ContinuousClock()
-        let pressed = clock.now
-        // A quiet refusal, with no message: it's an everyday miss, not a fault to explain.
-        let hasInput = deps.focus.hasFocusedTextInput()
-        let focusChecked = clock.now
-        guard hasInput else {
-            deps.play(.noFocusedInput)
-            return
-        }
-        guard deps.permissions.isMicrophoneAuthorized else {
-            fail("Microphone access is off: System Settings → Privacy & Security → Microphone")
-            return
-        }
-        do {
-            try deps.recorder.start()
-        } catch {
+        begin(pressedAt: pressed, releasedAt: released)
+    }
+
+    private func begin(pressedAt pressed: ContinuousClock.Instant?, releasedAt released: ContinuousClock.Instant) {
+        attempts += 1
+        let attempt = attempts
+        phase = .starting(attempt: attempt, pressedAt: pressed, releasedAt: released)
+        deps.recorder.start { [weak self] result in self?.started(attempt: attempt, result) }
+    }
+
+    private func started(attempt: Int, _ result: Result<Bool, any Error>) {
+        guard case .starting(attempt, let pressed, let released) = phase else { return }
+        let wasOpen: Bool
+        switch result {
+        case .success(let open): wasOpen = open
+        case .failure(let error):
+            phase = .idle
             fail("Mic error: \(error.localizedDescription)")
             return
         }
         deps.play(.recordingStarted)
-        // Press-to-chime latency, split by step, to see what makes starting feel slow.
-        Log.write(
-            "start: focus check \(Self.milliseconds(focusChecked - pressed)) ms, "
-                + "mic \(Self.milliseconds(clock.now - focusChecked)) ms")
-        let limit = settings.maximumClipDuration
-        recordingLimit = Task { [weak self] in
-            try? await Task.sleep(for: limit)
-            guard !Task.isCancelled else { return }
-            self?.finishRecording()
+        // Press-to-chime latency, to see what warming the mic on key-down saves.
+        let keyUp = "key-up → chime \(Self.milliseconds(.now - released)) ms"
+        if wasOpen, let pressed {
+            Log.write("start: key-down → chime \(Self.milliseconds(.now - pressed)) ms, \(keyUp)")
+        } else {
+            Log.write("start: \(keyUp) (cold)")
         }
+        phase = .recording(limit: after(settings.maximumClipDuration) { [weak self] in self?.finishRecording() })
         publishStatus()
     }
 
-    /// Returns the transcription task, so tests can await it.
+    /// Why a dictation can't start, checked in this order. The engine comes first so a press while it loads costs no
+    /// Accessibility call.
+    private enum Refusal {
+        case engineNotReady, noFocusedInput, microphoneOff
+    }
+
+    private func refusal() -> Refusal? {
+        guard case .ready = engineState else { return .engineNotReady }
+        guard deps.focus.hasFocusedTextInput() else { return .noFocusedInput }
+        guard deps.permissions.isMicrophoneAuthorized else { return .microphoneOff }
+        return nil
+    }
+
+    private func present(_ refusal: Refusal) {
+        switch refusal {
+        case .engineNotReady: deps.play(.alert)
+        // A quiet refusal, with no message: it's an everyday miss, not a fault to explain.
+        case .noFocusedInput: deps.play(.noFocusedInput)
+        case .microphoneOff: fail("Microphone access is off: System Settings → Privacy & Security → Microphone")
+        }
+    }
+
+    /// Returns the task that stops the mic and transcribes, so tests can await it.
     @discardableResult
     func finishRecording() -> Task<Void, Never>? {
-        guard deps.recorder.isRecording else { return nil }
-        recordingLimit?.cancel()
-        let clip = deps.recorder.stop()
+        guard case .recording(let limit) = phase else { return nil }
+        limit.cancel()
+        phase = .idle
         deps.play(.recordingStopped)
-        guard clip.duration >= settings.minimumClipDuration else {
-            publishStatus()
-            return nil
+        publishStatus()
+        // Asked for now, not from the task below, so a shortcut pressed straight after can't close the mic first.
+        let (clips, delivered) = AsyncStream.makeStream(of: AudioClip.self)
+        deps.recorder.stop { clip in
+            delivered.yield(clip)
+            delivered.finish()
         }
+        return Task { [weak self] in
+            for await clip in clips { await self?.transcribe(clip) }
+        }
+    }
 
+    private func transcribe(_ clip: AudioClip) async {
+        guard clip.duration >= settings.minimumClipDuration else { return }
         inFlight += 1
         publishStatus()
-        return Task { [weak self, engine = deps.engine] in
-            let result: Result<Transcript, Error>
-            do {
-                result = .success(try await engine.transcribe(clip))
-            } catch {
-                result = .failure(error)
-            }
-            self?.complete(result, clip: clip)
+        let result: Result<Transcript, Error>
+        do {
+            result = .success(try await deps.engine.transcribe(clip))
+        } catch {
+            result = .failure(error)
         }
+        complete(result, clip: clip)
     }
 
     private func complete(_ result: Result<Transcript, Error>, clip: AudioClip) {
@@ -225,17 +306,39 @@ final class DictationController {
     }
 
     private func cancelRecording() {
-        guard deps.recorder.isRecording else { return }
-        recordingLimit?.cancel()
+        switch phase {
+        case .idle: return
+        case .warming, .starting: discard()
+        case .recording:
+            discard()
+            deps.play(.recordingStopped)
+            publishStatus()
+        }
+    }
+
+    /// Closes the mic and forgets the dictation without a sound or a status change.
+    private func discard() {
+        switch phase {
+        case .warming(_, let limit), .recording(let limit): limit.cancel()
+        case .idle, .starting: break
+        }
+        phase = .idle
         deps.recorder.cancel()
-        deps.play(.recordingStopped)
-        publishStatus()
     }
 
     private func fail(_ message: String) {
         Log.write(message)
         onMessage?(message)
         deps.play(.alert)
+    }
+
+    /// Runs `action` after `duration` unless the task is cancelled first.
+    private func after(_ duration: Duration, do action: @escaping @MainActor () -> Void) -> Task<Void, Never> {
+        Task {
+            try? await Task.sleep(for: duration)
+            guard !Task.isCancelled else { return }
+            action()
+        }
     }
 
     private static func milliseconds(_ duration: Duration) -> Int {

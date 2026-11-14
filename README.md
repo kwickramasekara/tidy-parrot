@@ -82,15 +82,18 @@ a real voice and mic. The list builds in about a second after the model loads; d
 ## How it works
 
 ```
-fn tap  ─► AVAudioEngine (fresh each time, mic open only until the next tap)
+fn down ─► AVAudioEngine starts (fresh each time), closed again unless the press is a tap
+fn up   ─► chime once the mic is open; it stays open until the next tap
 fn tap  ─► resample to 16 kHz mono ─► helper over stdin ─► text over stdout
         ─► clipboard + ⌘V ─► your clipboard restored 0.5 s later
 ```
 
 - `app/`: Swift package. `TidyParrotCore` holds the app logic: a `DictationController` running hotkey → recorder →
   engine → paste, with each step behind a small protocol. `TidyParrot` is the executable that launches it.
-  Only a plain fn tap toggles: fn used with another key (fn+arrows, fn+Delete) is left alone. Esc discards the
-  recording, and the focused app still gets the Esc. Recordings stop after 3 minutes in case the stopping tap is
+  Only a plain fn tap toggles: fn used with another key (fn+arrows, fn+Delete) is left alone. The mic starts opening
+  on fn key-down to save the length of the tap. A press that turns out to be a shortcut closes it again without a
+  sound, though macOS may briefly show its mic indicator. Bluetooth mics open only on the tap, because opening one
+  switches the headset to its call profile. Esc discards the recording, and the focused app still gets the Esc. Recordings stop after 3 minutes in case the stopping tap is
   missed, since password fields hide key events from other apps.
 - `helper/`: `tidy_parrot_helper.py` loads the 8-bit model with clean mode once and warms it up, then answers one
   clip at a time over the protocol in `wire_protocol.py`. If the app quits or crashes, the helper's stdin closes and
