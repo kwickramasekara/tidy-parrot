@@ -108,6 +108,53 @@ struct DictationControllerTests {
         #expect(messages == ["Last: 1.0s of audio in 42 ms"])
     }
 
+    // MARK: Paste last dictation
+
+    @Test func nothingToPasteBeforeTheFirstDictation() {
+        let controller = makeReadyController()
+        #expect(!controller.canPasteLastDictation)
+        controller.pasteLastDictation()
+        #expect(inserter.inserted.isEmpty)
+    }
+
+    @Test func pastesTheLastDictationAgainWithTrailingSpace() async {
+        let controller = makeReadyController()
+        hotkey.send(.toggle)
+        await controller.finishRecording()?.value
+        engine.result = .success(Transcript(text: "second", milliseconds: 1))
+        hotkey.send(.toggle)
+        await controller.finishRecording()?.value
+
+        #expect(controller.canPasteLastDictation)
+        controller.pasteLastDictation()
+        #expect(inserter.inserted == ["hello ", "second ", "second "])
+    }
+
+    @Test(arguments: [Result<Transcript, Error>.failure(FakeError()), .success(Transcript(text: "", milliseconds: 1))])
+    func failedOrEmptyDictationKeepsThePreviousOne(result: Result<Transcript, Error>) async {
+        let controller = makeReadyController()
+        hotkey.send(.toggle)
+        await controller.finishRecording()?.value
+        engine.result = result
+        hotkey.send(.toggle)
+        await controller.finishRecording()?.value
+
+        controller.pasteLastDictation()
+        #expect(inserter.inserted == ["hello ", "hello "])
+    }
+
+    @Test func pasteLastDictationSkipsTheFocusCheck() async {
+        let controller = makeReadyController()
+        hotkey.send(.toggle)
+        await controller.finishRecording()?.value
+        focus.hasTextInput = false
+
+        controller.pasteLastDictation()
+        #expect(inserter.inserted == ["hello ", "hello "])
+        #expect(focus.checkCount == 1)
+        #expect(sounds.played == [.recordingStarted, .recordingStopped])
+    }
+
     // MARK: Refusals and failures
 
     @Test func toggleBeforeEngineReadyAlertsAndDoesNotRecord() {

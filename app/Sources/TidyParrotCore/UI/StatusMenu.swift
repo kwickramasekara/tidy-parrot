@@ -4,6 +4,8 @@ import AppKit
 @MainActor
 final class StatusMenu: NSObject {
     private let hotkey: ModifierKey
+    private let canPasteLastDictation: () -> Bool
+    private let onPasteLastDictation: () -> Void
     private let onRestartEngine: () -> Void
     private let onOpenLog: () -> Void
 
@@ -13,9 +15,13 @@ final class StatusMenu: NSObject {
     private let messageLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
 
     init(
-        icon: NSImage, hotkey: ModifierKey, onRestartEngine: @escaping () -> Void, onOpenLog: @escaping () -> Void
+        icon: NSImage, hotkey: ModifierKey, canPasteLastDictation: @escaping () -> Bool,
+        onPasteLastDictation: @escaping () -> Void, onRestartEngine: @escaping () -> Void,
+        onOpenLog: @escaping () -> Void
     ) {
         self.hotkey = hotkey
+        self.canPasteLastDictation = canPasteLastDictation
+        self.onPasteLastDictation = onPasteLastDictation
         self.onRestartEngine = onRestartEngine
         self.onOpenLog = onOpenLog
         super.init()
@@ -31,6 +37,8 @@ final class StatusMenu: NSObject {
         menu.addItem(statusLine)
         menu.addItem(messageLine)
         menu.addItem(.separator())
+        menu.addItem(withTitle: "Paste Last Dictation", action: #selector(pasteLastDictation), keyEquivalent: "")
+            .target = self
         menu.addItem(withTitle: "Restart Helper", action: #selector(restartEngine), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Open Log", action: #selector(openLog), keyEquivalent: "").target = self
         menu.addItem(.separator())
@@ -55,6 +63,14 @@ final class StatusMenu: NSObject {
         messageLine.isHidden = text.isEmpty
     }
 
+    @objc private func pasteLastDictation() { onPasteLastDictation() }
     @objc private func restartEngine() { onRestartEngine() }
     @objc private func openLog() { onOpenLog() }
+}
+
+/// The menu auto-enables its items, so this greys out Paste Last Dictation until there's one to paste.
+extension StatusMenu: NSMenuItemValidation {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        menuItem.action == #selector(pasteLastDictation) ? canPasteLastDictation() : true
+    }
 }

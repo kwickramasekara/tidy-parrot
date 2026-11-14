@@ -44,6 +44,8 @@ final class DictationController {
     private var hasAccessibility = false
     private var inFlight = 0
     private var recordingLimit: Task<Void, Never>?
+    /// Kept in memory only, never persisted, so it's gone on quit.
+    private var lastDictation: String?
 
     init(dependencies: Dependencies, settings: DictationSettings = DictationSettings()) {
         deps = dependencies
@@ -80,6 +82,16 @@ final class DictationController {
     func restartEngine() {
         deps.engine.stop()
         deps.engine.start()
+    }
+
+    var canPasteLastDictation: Bool { lastDictation != nil }
+
+    /// For when the dictation went nowhere, e.g. an Electron app that hides its focus so the check couldn't refuse.
+    /// Skips the focus check on purpose: the user has chosen the field, and the check, run from our own menu, may see
+    /// the closing menu item as focused and refuse.
+    func pasteLastDictation() {
+        guard let lastDictation else { return }
+        deps.inserter.insert(lastDictation + settings.trailingText)
     }
 
     // MARK: Hotkey → record → transcribe → insert
@@ -173,7 +185,10 @@ final class DictationController {
                     format: "%.1fs audio -> %d chars in %d ms", clip.duration, transcript.text.count,
                     transcript.milliseconds))
             onMessage?(String(format: "Last: %.1fs of audio in %d ms", clip.duration, transcript.milliseconds))
-            if !transcript.text.isEmpty { deps.inserter.insert(transcript.text + settings.trailingText) }
+            if !transcript.text.isEmpty {
+                lastDictation = transcript.text
+                deps.inserter.insert(transcript.text + settings.trailingText)
+            }
         case .failure(let error):
             fail("Error: \(error.localizedDescription)")
         }
