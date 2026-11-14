@@ -70,6 +70,7 @@ See [AGENTS.md](AGENTS.md) for the full architecture, conventions and where to a
 
 Menu bar icon: a parrot, with ⚠️ beside it when something needs attention (open the menu to see what). The parrot
 is the Fluent UI Emoji parrot by Microsoft, under the MIT license in `app/Resources/MenuBarIcon-LICENSE.txt`.
+Option-click the icon for diagnostics: helper state, model load time, the last dictation's timing and both permissions.
 Logs: `~/Library/Logs/TidyParrot.log` (timings only, never the text), or **Open Log** in the menu.
 
 ## Measured on an M4 Pro

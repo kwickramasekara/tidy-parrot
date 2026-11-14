@@ -2,7 +2,7 @@ import Foundation
 
 enum EngineState: Equatable, Sendable {
     case loading
-    case ready(cleanMode: Bool)
+    case ready(cleanMode: Bool, loadMilliseconds: Int)
     case failed(String)
 }
 

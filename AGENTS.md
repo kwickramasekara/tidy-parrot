@@ -38,7 +38,7 @@ GlobalHotkeyMonitor ─toggle/cancel────────► DictationControl
 - **`app/Sources/TidyParrotCore/`**: all app code, in one folder per concern:
   - `App/`: `AppDelegate` is the **composition root**, the only place that creates live implementations.
   - `Dictation/`: `DictationController` owns all state and runs the pipeline. `DictationSettings` holds its tunables.
-    `AppStatus` is the derived status and its menu text.
+    `AppStatus` is the derived status and its menu text. `Diagnostics` is what Option-clicking the menu bar icon shows.
   - `Audio/`: `AudioRecording` protocol, `MicrophoneRecorder`, `Resampler`, and `AudioClip` (mono float32 at 16 kHz).
     `AudioLevel` maps loudness to 0–1, and `LevelMeter` turns the tap's audio into one level per 50 ms for the
     on-screen meter.
@@ -94,9 +94,9 @@ When stdin closes, the helper exits. The helper writes logs to stderr, which goe
   `@testable import`.
 - **Keep protocols small.** Add a method only when a caller needs it. Extend an existing type rather than adding a
   parallel one that does the same job.
-- **Keep logic pure where you can.** `TapToToggleDetector`, `HelperProtocol`, `AppStatus.presentation` and
-  `HelperProcessEngine.Configuration(infoDictionary:)` have no side effects and get table-style tests. Follow that
-  pattern for new logic.
+- **Keep logic pure where you can.** `TapToToggleDetector`, `HelperProtocol`, `AppStatus.presentation`,
+  `Diagnostics.lines` and `HelperProcessEngine.Configuration(infoDictionary:)` have no side effects and get
+  table-style tests. Follow that pattern for new logic.
 - **Testing:**
   - Use Swift Testing (`import Testing`, `@Test`, `#expect`), not XCTest.
   - Test failure and refusal paths as well as the happy path.

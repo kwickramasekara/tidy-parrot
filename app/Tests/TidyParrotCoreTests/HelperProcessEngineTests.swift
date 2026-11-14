@@ -42,7 +42,7 @@ struct HelperProcessEngineTests {
     @Test func helperDyingMidRequestFailsTheRequest() async {
         let engine = Self.engine(
             running: #"echo '{"ready": true, "load_ms": 1, "clean_mode": false}'; head -c 4 >/dev/null"#)
-        #expect(await Self.firstSettledState(of: engine) == .ready(cleanMode: false))
+        #expect(await Self.firstSettledState(of: engine) == .ready(cleanMode: false, loadMilliseconds: 1))
         await #expect(throws: TranscriptionError.notRunning) {
             try await engine.transcribe(AudioClip(samples: [0, 0, 0]))
         }
@@ -50,7 +50,7 @@ struct HelperProcessEngineTests {
 
     @Test func stopIsQuiet() async throws {
         let engine = Self.engine(running: #"echo '{"ready": true}'; cat >/dev/null"#)
-        #expect(await Self.firstSettledState(of: engine) == .ready(cleanMode: false))
+        #expect(await Self.firstSettledState(of: engine) == .ready(cleanMode: false, loadMilliseconds: 0))
         var later: [EngineState] = []
         engine.onStateChange = { later.append($0) }
         engine.stop()

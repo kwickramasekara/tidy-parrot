@@ -67,16 +67,16 @@ final class FakeInserter: TextInserting {
 @MainActor
 final class FakePermissions: PermissionsProviding {
     var isMicrophoneAuthorized = true
-    var accessibilityTrusted = true
+    var isAccessibilityTrusted = true
     private(set) var microphoneRequested = false
     private var pendingGrant: (@MainActor () -> Void)?
 
     func requestMicrophoneAccess() { microphoneRequested = true }
-    func promptForAccessibility() -> Bool { accessibilityTrusted }
+    func promptForAccessibility() -> Bool { isAccessibilityTrusted }
     func waitForAccessibility(_ granted: @escaping @MainActor () -> Void) { pendingGrant = granted }
 
     func grantAccessibility() {
-        accessibilityTrusted = true
+        isAccessibilityTrusted = true
         pendingGrant?()
         pendingGrant = nil
     }

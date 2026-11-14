@@ -30,6 +30,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = StatusMenu(
             icon: Self.makeMenuBarIcon(),
             hotkey: Self.hotkey,
+            diagnostics: { [weak controller] in controller?.diagnostics.lines ?? [] },
             canPasteLastDictation: { [weak controller] in controller?.canPasteLastDictation ?? false },
             onPasteLastDictation: { [weak controller] in controller?.pasteLastDictation() },
             onRestartEngine: { [weak controller] in controller?.restartEngine() },

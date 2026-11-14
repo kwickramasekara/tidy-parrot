@@ -35,7 +35,7 @@ final class DictationController {
     }
 
     var onStatusChange: ((AppStatus) -> Void)?
-    /// The outcome of the last dictation, e.g. its timing or an error.
+    /// The last dictation's error, or an empty string once a dictation succeeds. Timings go to the log only.
     var onMessage: ((String) -> Void)?
 
     private let deps: Dependencies
@@ -46,6 +46,7 @@ final class DictationController {
     private var recordingLimit: Task<Void, Never>?
     /// Kept in memory only, never persisted, so it's gone on quit.
     private var lastDictation: String?
+    private var lastTiming: Diagnostics.Timing?
 
     init(dependencies: Dependencies, settings: DictationSettings = DictationSettings()) {
         deps = dependencies
@@ -58,7 +59,7 @@ final class DictationController {
         if inFlight > 0 { return .transcribing }
         switch engineState {
         case .loading: return .loading
-        case .ready(let cleanMode): return .ready(cleanMode: cleanMode)
+        case .ready(let cleanMode, _): return .ready(cleanMode: cleanMode)
         case .failed(let reason): return .failed(reason)
         }
     }
@@ -85,6 +86,14 @@ final class DictationController {
     }
 
     var canPasteLastDictation: Bool { lastDictation != nil }
+
+    /// Read live, so a permission revoked since launch shows up.
+    var diagnostics: Diagnostics {
+        Diagnostics(
+            engine: engineState, lastTiming: lastTiming,
+            isMicrophoneAuthorized: deps.permissions.isMicrophoneAuthorized,
+            isAccessibilityTrusted: deps.permissions.isAccessibilityTrusted)
+    }
 
     /// For when the dictation went nowhere, e.g. an Electron app that hides its focus so the check couldn't refuse.
     /// Skips the focus check on purpose: the user has chosen the field, and the check, run from our own menu, may see
@@ -184,7 +193,8 @@ final class DictationController {
                 String(
                     format: "%.1fs audio -> %d chars in %d ms", clip.duration, transcript.text.count,
                     transcript.milliseconds))
-            onMessage?(String(format: "Last: %.1fs of audio in %d ms", clip.duration, transcript.milliseconds))
+            lastTiming = Diagnostics.Timing(audioDuration: clip.duration, milliseconds: transcript.milliseconds)
+            onMessage?("")
             if !transcript.text.isEmpty {
                 lastDictation = transcript.text
                 deps.inserter.insert(transcript.text + settings.trailingText)

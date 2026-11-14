@@ -76,7 +76,7 @@ final class HelperProcessEngine: TranscriptionEngine {
         switch HelperProtocol.decode(line) {
         case .ready(let loadMilliseconds, let cleanMode):
             Log.write("helper ready in \(loadMilliseconds) ms, clean mode \(cleanMode)")
-            onStateChange?(.ready(cleanMode: cleanMode))
+            onStateChange?(.ready(cleanMode: cleanMode, loadMilliseconds: loadMilliseconds))
         case .error(let text):
             // e.g. model missing. Disconnect first so the exit that follows doesn't replace this with a status code.
             fail(text)

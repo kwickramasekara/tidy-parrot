@@ -28,7 +28,7 @@ struct DictationControllerTests {
     func makeReadyController(settings: DictationSettings = DictationSettings()) -> DictationController {
         let controller = makeController(settings: settings)
         controller.start()
-        engine.emit(.ready(cleanMode: true))
+        engine.emit(.ready(cleanMode: true, loadMilliseconds: 1))
         return controller
     }
 
@@ -44,10 +44,10 @@ struct DictationControllerTests {
     }
 
     @Test func withoutAccessibilityHotkeyWaitsForGrant() {
-        permissions.accessibilityTrusted = false
+        permissions.isAccessibilityTrusted = false
         let controller = makeController()
         controller.start()
-        engine.emit(.ready(cleanMode: true))
+        engine.emit(.ready(cleanMode: true, loadMilliseconds: 1))
         #expect(!hotkey.started)
         #expect(controller.status == .needsAccessibility)
 
@@ -61,7 +61,7 @@ struct DictationControllerTests {
         var seen: [AppStatus] = []
         controller.onStatusChange = { seen.append($0) }
         controller.start()
-        engine.emit(.ready(cleanMode: false))
+        engine.emit(.ready(cleanMode: false, loadMilliseconds: 1))
         engine.emit(.failed("boom"))
         #expect(seen.contains(.ready(cleanMode: false)))
         #expect(seen.last == .failed("boom"))
@@ -99,13 +99,54 @@ struct DictationControllerTests {
         #expect(inserter.inserted.isEmpty)
     }
 
-    @Test func reportsTimingMessage() async {
+    /// Timings go to the log only; a success just clears the previous dictation's error from the menu.
+    @Test func successClearsPreviousErrorMessage() async {
+        engine.result = .failure(FakeError())
         let controller = makeReadyController()
         var messages: [String] = []
         controller.onMessage = { messages.append($0) }
         hotkey.send(.toggle)
         await controller.finishRecording()?.value
-        #expect(messages == ["Last: 1.0s of audio in 42 ms"])
+        engine.result = .success(Transcript(text: "hello", milliseconds: 42))
+        hotkey.send(.toggle)
+        await controller.finishRecording()?.value
+        #expect(messages == ["Error: fake failure", ""])
+    }
+
+    // MARK: Diagnostics
+
+    @Test func diagnosticsRecordTheLastSuccessfulDictation() async {
+        let controller = makeReadyController()
+        #expect(controller.diagnostics.lastTiming == nil)
+        hotkey.send(.toggle)
+        await controller.finishRecording()?.value
+        #expect(controller.diagnostics.lastTiming == .init(audioDuration: 1.0, milliseconds: 42))
+    }
+
+    @Test func failedDictationKeepsThePreviousTiming() async {
+        let controller = makeReadyController()
+        hotkey.send(.toggle)
+        await controller.finishRecording()?.value
+        engine.result = .failure(FakeError())
+        hotkey.send(.toggle)
+        await controller.finishRecording()?.value
+        #expect(controller.diagnostics.lastTiming == .init(audioDuration: 1.0, milliseconds: 42))
+    }
+
+    @Test func diagnosticsReflectEngineStateAndLivePermissions() {
+        let controller = makeController()
+        controller.start()
+        #expect(controller.diagnostics.engine == .loading)
+        engine.emit(.ready(cleanMode: false, loadMilliseconds: 900))
+        #expect(controller.diagnostics.engine == .ready(cleanMode: false, loadMilliseconds: 900))
+        #expect(controller.diagnostics.isMicrophoneAuthorized)
+        #expect(controller.diagnostics.isAccessibilityTrusted)
+
+        // Revoked after launch: the controller's own grant flag never goes back, so this must be read live.
+        permissions.isMicrophoneAuthorized = false
+        permissions.isAccessibilityTrusted = false
+        #expect(!controller.diagnostics.isMicrophoneAuthorized)
+        #expect(!controller.diagnostics.isAccessibilityTrusted)
     }
 
     // MARK: Paste last dictation

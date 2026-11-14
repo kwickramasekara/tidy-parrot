@@ -23,7 +23,12 @@ struct HelperIntegrationTests {
                 arguments: []))
 
         let ready = await Self.waitForReadyOrFailure(engine)
-        #expect(ready == .ready(cleanMode: true))
+        guard case .ready(let cleanMode, let loadMilliseconds) = ready else {
+            Issue.record("expected ready, got \(ready)")
+            return
+        }
+        #expect(cleanMode)
+        #expect(loadMilliseconds > 0)
 
         // Two requests in flight at once: each reply must match its own clip.
         async let speech = engine.transcribe(clip)

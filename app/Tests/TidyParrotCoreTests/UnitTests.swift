@@ -178,6 +178,40 @@ struct AppStatusTests {
     }
 }
 
+struct DiagnosticsTests {
+    @Test func readyShowsLoadTimeLastDictationAndPermissions() {
+        let diagnostics = Diagnostics(
+            engine: .ready(cleanMode: true, loadMilliseconds: 2140),
+            lastTiming: .init(audioDuration: 1.26, milliseconds: 76),
+            isMicrophoneAuthorized: true, isAccessibilityTrusted: true)
+        #expect(
+            diagnostics.lines == [
+                "Helper: ready",
+                "Model load: 2140 ms",
+                "Last dictation: 1.3s of audio in 76 ms",
+                "Microphone: allowed",
+                "Accessibility: allowed",
+            ])
+    }
+
+    /// Load time comes from the helper's ready message, so there's nothing to show before or without one.
+    @Test(arguments: [
+        (EngineState.loading, "Helper: loading model…"),
+        (.failed("Helper stopped (status 1)"), "Helper: failed (Helper stopped (status 1))"),
+    ])
+    func notReadyShowsOnlyTheHelperState(engine: EngineState, helperLine: String) {
+        let diagnostics = Diagnostics(
+            engine: engine, lastTiming: nil, isMicrophoneAuthorized: false, isAccessibilityTrusted: false)
+        #expect(
+            diagnostics.lines == [
+                helperLine,
+                "Last dictation: none yet",
+                "Microphone: not allowed",
+                "Accessibility: not allowed",
+            ])
+    }
+}
+
 @MainActor
 struct UnavailableEngineTests {
     @Test func reportsFailureOnStart() async {
