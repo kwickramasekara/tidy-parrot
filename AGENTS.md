@@ -61,6 +61,8 @@ GlobalHotkeyMonitor ─toggle/cancel────────► DictationControl
   - `build.sh` assembles the `.app` from `app/Resources/Info.plist`. It adds the helper paths with `plutil` and
     signs the bundle with the `Tidy Parrot Dev` certificate (or `SIGN_IDENTITY`), falling back to ad hoc.
   - `setup.sh` creates the venv and downloads the model.
+- **`app/Resources/MenuBarIcon.pdf`**: the menu bar template image, the Fluent UI Emoji parrot (MIT, see
+  `MenuBarIcon-LICENSE.txt`, which `build.sh` also copies into the bundle). Keep it one color so macOS can tint it.
 
 ### Helper protocol
 

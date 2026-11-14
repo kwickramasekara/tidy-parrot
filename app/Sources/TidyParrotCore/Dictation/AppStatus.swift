@@ -9,17 +9,18 @@ enum AppStatus: Equatable, Sendable {
     case ready(cleanMode: Bool)
     case failed(String)
 
-    /// SF Symbol and one-line description for the menu bar.
-    func presentation(hotkey: ModifierKey) -> (symbol: String, text: String) {
+    /// Whether the menu bar should flag a problem, and a one-line description for the menu.
+    /// Only problems are flagged: recording already shows in the on-screen `RecordingIndicator`.
+    func presentation(hotkey: ModifierKey) -> (needsAttention: Bool, text: String) {
         switch self {
         case .needsAccessibility:
-            ("exclamationmark.triangle", "Needs Accessibility permission: System Settings → Privacy & Security")
-        case .listening: ("mic.fill", "Listening… tap \(hotkey.displayName) to insert, Esc to cancel")
-        case .transcribing: ("ellipsis.circle", "Transcribing…")
-        case .loading: ("hourglass", "Loading model…")
+            (true, "Needs Accessibility permission: System Settings → Privacy & Security")
+        case .listening: (false, "Listening… tap \(hotkey.displayName) to insert, Esc to cancel")
+        case .transcribing: (false, "Transcribing…")
+        case .loading: (false, "Loading model…")
         case .ready(let clean):
-            ("bird", "Ready: tap \(hotkey.displayName) to dictate" + (clean ? " (clean mode)" : ""))
-        case .failed(let reason): ("exclamationmark.triangle", reason)
+            (false, "Ready: tap \(hotkey.displayName) to dictate" + (clean ? " (clean mode)" : ""))
+        case .failed(let reason): (true, reason)
         }
     }
 }

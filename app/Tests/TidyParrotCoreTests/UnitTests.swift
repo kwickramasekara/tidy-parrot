@@ -127,15 +127,28 @@ struct HelperConfigurationTests {
 
 struct AppStatusTests {
     @Test func readyMentionsHotkeyAndCleanMode() {
-        let (symbol, text) = AppStatus.ready(cleanMode: true).presentation(hotkey: .function)
-        #expect(symbol == "bird")
-        #expect(text == "Ready: tap fn to dictate (clean mode)")
+        #expect(
+            AppStatus.ready(cleanMode: true).presentation(hotkey: .function).text
+                == "Ready: tap fn to dictate (clean mode)")
         #expect(!AppStatus.ready(cleanMode: false).presentation(hotkey: .function).text.contains("clean"))
     }
 
     @Test func listeningExplainsHowToStopAndCancel() {
         let text = AppStatus.listening.presentation(hotkey: .function).text
         #expect(text == "Listening… tap fn to insert, Esc to cancel")
+    }
+
+    @Test(arguments: [
+        (AppStatus.needsAccessibility, true),
+        (.failed("Helper stopped"), true),
+        (.listening, false),
+        (.transcribing, false),
+        (.loading, false),
+        (.ready(cleanMode: true), false),
+        (.ready(cleanMode: false), false),
+    ])
+    func onlyProblemsNeedAttention(status: AppStatus, needsAttention: Bool) {
+        #expect(status.presentation(hotkey: .function).needsAttention == needsAttention)
     }
 
     @Test func failureShowsReason() {

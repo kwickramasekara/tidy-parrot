@@ -27,6 +27,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
                 play: SystemSounds.play
             ))
         let menu = StatusMenu(
+            icon: Self.makeMenuBarIcon(),
             hotkey: Self.hotkey,
             onRestartEngine: { [weak controller] in controller?.restartEngine() },
             onOpenLog: { NSWorkspace.shared.open(Log.url) }
@@ -46,6 +47,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     public func applicationWillTerminate(_ notification: Notification) {
         controller?.stop()
+    }
+
+    /// `scripts/build.sh` copies the parrot into the bundle. Without it (e.g. `swift run`), fall back to a system bird.
+    private static func makeMenuBarIcon() -> NSImage {
+        Bundle.main.image(forResource: "MenuBarIcon")
+            ?? NSImage(systemSymbolName: "bird", accessibilityDescription: nil)
+            ?? NSImage()
     }
 
     private static func makeEngine() -> any TranscriptionEngine {

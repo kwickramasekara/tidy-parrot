@@ -7,15 +7,22 @@ final class StatusMenu: NSObject {
     private let onRestartEngine: () -> Void
     private let onOpenLog: () -> Void
 
-    private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    // Variable length so the warning emoji fits beside the icon when there's a problem.
+    private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let statusLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
     private let messageLine = NSMenuItem(title: "", action: nil, keyEquivalent: "")
 
-    init(hotkey: ModifierKey, onRestartEngine: @escaping () -> Void, onOpenLog: @escaping () -> Void) {
+    init(
+        icon: NSImage, hotkey: ModifierKey, onRestartEngine: @escaping () -> Void, onOpenLog: @escaping () -> Void
+    ) {
         self.hotkey = hotkey
         self.onRestartEngine = onRestartEngine
         self.onOpenLog = onOpenLog
         super.init()
+
+        // Template images get tinted by macOS to suit light and dark menu bars.
+        icon.isTemplate = true
+        item.button?.image = icon
 
         let menu = NSMenu()
         statusLine.isEnabled = false
@@ -32,12 +39,14 @@ final class StatusMenu: NSObject {
     }
 
     func show(_ status: AppStatus) {
-        let (symbol, text) = status.presentation(hotkey: hotkey)
+        let (needsAttention, text) = status.presentation(hotkey: hotkey)
         statusLine.title = text
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: text)
-        image?.isTemplate = true
-        item.button?.image = image
-        item.button?.toolTip = "Tidy Parrot: \(text)"
+        guard let button = item.button else { return }
+        button.title = needsAttention ? "⚠️" : ""
+        button.imagePosition = needsAttention ? .imageLeading : .imageOnly
+        let label = "Tidy Parrot: \(text)"
+        button.toolTip = label
+        button.setAccessibilityLabel(label)
     }
 
     /// Second line for the outcome of the last dictation.
