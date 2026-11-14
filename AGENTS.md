@@ -15,7 +15,7 @@ Run everything through `make`; `make help` lists every target.
 | `make icon` | Regenerates the committed `app/Resources/AppIcon.icns` from `AppIcon.png`. Run it after changing the artwork |
 | `make test` | Swift unit tests plus Python tests (protocol, vocabulary, boost table). Fast, and needs no model |
 | `make lint` / `make format` | swift-format with `.swift-format`. Lint is `--strict` |
-| `make integration WAV=clip.wav` | Swift engine against the real helper and model |
+| `make integration WAV=clip.wav` | Swift engine against the real helper and model, and the copied greedy decoder against the stock one |
 | `make smoke WAV=clip.wav` | Python helper alone, over its stdin protocol |
 
 Before you finish a change, run `make lint test`. If you touched the helper, the protocol or the engine, also run

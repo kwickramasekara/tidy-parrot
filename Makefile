@@ -32,6 +32,7 @@ test-helper: $(PYTHON) ## Python protocol tests
 integration: $(PYTHON) ## Swift engine against the real helper: make integration WAV=clip.wav
 	@test -n "$(WAV)" || (echo "usage: make integration WAV=clip.wav" >&2; exit 2)
 	TP_INTEGRATION_WAV="$(abspath $(WAV))" swift test --package-path app --filter HelperIntegrationTests
+	TP_INTEGRATION_WAV="$(abspath $(WAV))" $(PYTHON) -m unittest discover -s helper/tests -t helper -p 'integration_*.py'
 
 smoke: $(PYTHON) ## Python helper alone, real model: make smoke WAV=clip.wav
 	@test -n "$(WAV)" || (echo "usage: make smoke WAV=clip.wav" >&2; exit 2)

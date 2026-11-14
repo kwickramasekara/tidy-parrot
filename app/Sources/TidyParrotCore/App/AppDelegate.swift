@@ -33,7 +33,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             diagnostics: { [weak controller] in controller?.diagnostics.lines ?? [] },
             canPasteLastDictation: { [weak controller] in controller?.canPasteLastDictation ?? false },
             onPasteLastDictation: { [weak controller] in controller?.pasteLastDictation() },
-            onEditVocabulary: { NSWorkspace.shared.open(VocabularyFile.prepareForEditing()) },
+            onEditVocabulary: {
+                guard let url = VocabularyFile.prepareForEditing() else {
+                    Log.write("vocabulary file not created yet; the helper creates it as it starts")
+                    return
+                }
+                NSWorkspace.shared.open(url)
+            },
             onRestartEngine: { [weak controller] in controller?.restartEngine() },
             onOpenLog: { NSWorkspace.shared.open(Log.url) }
         )

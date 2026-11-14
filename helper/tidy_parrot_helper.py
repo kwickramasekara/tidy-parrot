@@ -91,8 +91,12 @@ def main() -> None:
         sys.exit(1)
 
     # Before the model loads, so Edit Vocabulary finds the file as soon as the app starts.
-    if args.vocabulary and vocab.seed(args.vocabulary, DEFAULT_VOCABULARY):
-        log("vocabulary created with the default terms")
+    if args.vocabulary:
+        try:
+            if vocab.seed(args.vocabulary, DEFAULT_VOCABULARY):
+                log("vocabulary created with the default terms")
+        except OSError as e:  # without the file the vocabulary is just off; dictation must still start
+            log(f"couldn't create the vocabulary file ({type(e).__name__})")
 
     start = time.perf_counter()
     model = load(str(MODEL_DIR), bits=8, clean_mode=clean_mode)

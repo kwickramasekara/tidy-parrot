@@ -7,11 +7,12 @@ enum VocabularyFile {
         .appendingPathComponent("TidyParrot/vocabulary.txt")
 
     /// Returns the file to open, creating an empty one if the user deleted it (that's how they turn the vocabulary
-    /// off), so choosing Edit Vocabulary always opens something.
-    static func prepareForEditing(at url: URL = url) -> URL {
+    /// off). Nil until the helper's first launch has created the folder: making the folder here would stop the helper
+    /// from seeding the default list, which it does only when the folder is new.
+    static func prepareForEditing(at url: URL = url) -> URL? {
         let files = FileManager.default
+        guard files.fileExists(atPath: url.deletingLastPathComponent().path) else { return nil }
         if !files.fileExists(atPath: url.path) {
-            try? files.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             files.createFile(atPath: url.path, contents: nil)
         }
         return url

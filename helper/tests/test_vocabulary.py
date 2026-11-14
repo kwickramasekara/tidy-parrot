@@ -68,6 +68,16 @@ class FileTests(unittest.TestCase):
         self.assertFalse(seed(path, default))
         self.assertFalse(path.exists())
 
+    def test_a_failed_seed_leaves_nothing_so_the_next_launch_tries_again(self):
+        path = self.dir / "app" / "vocabulary.txt"
+        with self.assertRaises(OSError):
+            seed(path, self.dir / "missing-default.txt")
+        self.assertFalse(path.parent.exists())
+
+        default = self.dir / "default.txt"
+        default.write_text("React\n")
+        self.assertTrue(seed(path, default))
+
 
 class VocabularyTests(unittest.TestCase):
     def setUp(self):
@@ -121,7 +131,7 @@ class VocabularyTests(unittest.TestCase):
         # Undoing the bad edit restores the same content: no rebuild, and the problem clears.
         self.path.write_text("React\n")
         self.assertFalse(v.reload())
-        self.assertIsNone(v.error)
+        self.assertIsNone(v.status()["error"])
         self.assertEqual(len(self.builds), 1)
 
     def test_a_failing_build_keeps_the_last_good_one(self):
@@ -137,7 +147,7 @@ class VocabularyTests(unittest.TestCase):
         self.path.write_text("React\nVue\n")
         self.assertFalse(v.reload())
         self.assertIs(v.active, good)
-        self.assertIsNotNone(v.error)
+        self.assertIsNotNone(v.status()["error"])
 
     def test_readers_see_the_old_vocabulary_until_the_new_one_is_complete(self):
         self.path.write_text("React\n")
@@ -168,6 +178,32 @@ class VocabularyTests(unittest.TestCase):
         v.reload()
         self.assertTrue(self.logs)
         self.assertFalse(any("Pencilwrench" in line for line in self.logs))
+
+
+class KeepLoadedTests(unittest.TestCase):
+    def test_a_save_during_the_first_build_is_applied(self):
+        # FSEvents doesn't replay changes made before the watch began, so the watcher must catch up on its own.
+        path = temp_dir(self) / "vocabulary.txt"
+        path.write_text("React\n")
+        building, release = threading.Event(), threading.Event()
+
+        def build(terms):
+            if terms == ["React"]:
+                building.set()
+                release.wait(5)
+            return tuple(terms)
+
+        v = Vocabulary(path, build, lambda _: None)
+        stop = threading.Event()
+        thread = threading.Thread(target=vocab.keep_loaded, args=(v, stop, lambda _: None),
+                                  kwargs={"debounce_ms": 300})
+        thread.start()
+        self.addCleanup(thread.join, 5)
+        self.addCleanup(stop.set)
+        self.assertTrue(building.wait(5))
+        path.write_text("Vue\n")  # before the watcher starts
+        release.set()
+        self.assertTrue(wait_until(lambda: v.active is not None and v.active.terms == ("Vue",)))
 
 
 class WatchTests(unittest.TestCase):

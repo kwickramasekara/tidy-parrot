@@ -549,24 +549,26 @@ struct LevelBarsViewTests {
 
 struct VocabularyFileTests {
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    var url: URL { folder.appendingPathComponent("vocabulary.txt") }
 
-    @Test func createsAnEmptyFileWhenMissing() throws {
+    @Test func createsAnEmptyFileWhenTheUserDeletedIt() throws {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
-        let url = folder.appendingPathComponent("vocabulary.txt")
         #expect(VocabularyFile.prepareForEditing(at: url) == url)
         #expect(try Data(contentsOf: url).isEmpty)
     }
 
     @Test func leavesAnExistingFileAlone() throws {
-        defer { try? FileManager.default.removeItem(at: folder) }
-        let url = folder.appendingPathComponent("vocabulary.txt")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
         try Data("React\n".utf8).write(to: url)
-        _ = VocabularyFile.prepareForEditing(at: url)
+        #expect(VocabularyFile.prepareForEditing(at: url) == url)
         #expect(try String(contentsOf: url, encoding: .utf8) == "React\n")
     }
 
-    @Test func liveFileIsInApplicationSupport() {
-        #expect(VocabularyFile.url.path.hasSuffix("Library/Application Support/TidyParrot/vocabulary.txt"))
+    /// Before the helper's first launch: creating the folder would stop it seeding the default list.
+    @Test func createsNothingBeforeTheHelperHasSeeded() {
+        #expect(VocabularyFile.prepareForEditing(at: url) == nil)
+        #expect(!FileManager.default.fileExists(atPath: folder.path))
     }
 }

@@ -72,7 +72,8 @@ You don't list misspellings. What the list can't fix is a term that sounds like 
 If a save can't be used (a line with no letters or digits, or a file that isn't UTF-8), the menu bar shows ⚠️ with
 the line number, and the previous list stays in effect until you fix it. Empty the file, or delete it, to turn the
 vocabulary off. To get the default list back, quit, delete the `TidyParrot` folder, and relaunch.
-Option-click the icon to see how many terms are loaded and when.
+Option-click the icon to see how many terms are loaded and when. The ⚠️ and these details update with your next
+dictation, not the moment you save: the helper reports them alongside each transcript.
 
 Measured with synthetic voices on held-out sentences, with an earlier 154-term list: exactly right terms went from 43% to
 76%, with no false hits on 30 trap sentences, and no added latency once the list is loaded. Expect lower numbers with
