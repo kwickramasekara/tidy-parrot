@@ -55,7 +55,7 @@ GlobalHotkeyMonitor ─toggle/cancel────────► DictationControl
   - `vendor/fluid_speech_mlx.py` is the upstream loader. **Unmodified; don't edit.**
 - **`scripts/`**:
   - `build.sh` assembles the `.app` from `app/Resources/Info.plist`. It adds the helper paths with `plutil` and
-    signs the bundle ad hoc.
+    signs the bundle with the `Tidy Parrot Dev` certificate (or `SIGN_IDENTITY`), falling back to ad hoc.
   - `setup.sh` creates the venv and downloads the model.
 
 ### Helper protocol
@@ -118,8 +118,9 @@ When stdin closes, the helper exits. The helper writes logs to stderr, which goe
 
 ## Gotchas
 
-- The app is signed ad hoc, so after a rebuild macOS may stop honoring the Accessibility grant. Remove the app under
-  Privacy & Security → Accessibility and add it again.
+- Without a trusted signing certificate the app is signed ad hoc, and every rebuild loses the Accessibility grant.
+  README.md's "Signing" section sets one up. Until then, remove the app under Privacy & Security → Accessibility and
+  add it again after each build.
 - `build.sh` writes the helper's absolute paths into the app bundle. Rebuild after moving the folder.
 - Paste uses key code 9, which is V on QWERTY only.
 - NSEvent monitors only observe, so fn and Esc still reach macOS and the focused app. A plain fn tap also triggers

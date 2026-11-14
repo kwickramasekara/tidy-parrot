@@ -35,9 +35,16 @@ if $VERBATIM; then
 fi
 plutil -lint "$PLIST" >/dev/null
 
-# Ad-hoc signature. macOS ties the Accessibility grant to it, so after a rebuild you may need to
-# remove and re-add Tidy Parrot under Privacy & Security → Accessibility.
-codesign --force --sign - "$APP"
+# macOS ties the Accessibility grant to the signature's designated requirement. An ad-hoc signature's requirement is
+# the build's hash, so every rebuild loses the grant; a certificate's requirement is the same from build to build.
+IDENTITY="${SIGN_IDENTITY:-Tidy Parrot Dev}"
+if [[ "$(security find-identity -v -p codesigning)" == *"\"$IDENTITY\""* ]]; then
+  codesign --force --sign "$IDENTITY" "$APP"
+else
+  echo "warning: no trusted \"$IDENTITY\" code-signing certificate, so signing ad hoc. You'll need to re-grant" >&2
+  echo "         Accessibility after every rebuild. See \"Signing\" in README.md." >&2
+  codesign --force --sign - "$APP"
+fi
 
 echo "Built $APP"
 echo "Run: open \"$APP\""

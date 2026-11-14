@@ -32,8 +32,19 @@ On first launch macOS asks for two permissions:
   Accessibility. The app checks every second and starts the hotkey once it's allowed. This hasn't been tested yet;
   if the hotkey doesn't work, quit and reopen the app.
 
-The app is signed ad hoc, so **after each rebuild** macOS may silently stop honoring the Accessibility grant. If the
-menu bar shows a warning triangle, remove Tidy Parrot from that list with "−", then add it again.
+### Signing
+
+macOS ties the Accessibility grant to the app's signature. Without a certificate the build is signed ad hoc, and an
+ad-hoc signature changes with every build, so **each rebuild loses the grant**. Turning the switch off and on doesn't
+help, because the list entry still points at the old build. To keep the grant, create a signing certificate once:
+
+1. Open Keychain Access, then Keychain Access → Certificate Assistant → Create a Certificate…
+2. Name it `Tidy Parrot Dev`, with Identity Type **Self-Signed Root** and Certificate Type **Code Signing**.
+3. Double-click the new certificate, open **Trust**, and set **Code Signing** to **Always Trust**.
+4. Run `make run`. The build no longer prints the ad-hoc warning.
+5. One last time, remove Tidy Parrot from the Accessibility list with "−" and add it again. Later builds keep the grant.
+
+To use a different certificate, such as an Apple Development one, run `make run SIGN_IDENTITY="its name"`.
 
 ## How it works
 
