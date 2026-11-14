@@ -7,6 +7,7 @@ enum SystemSounds {
         switch sound {
         case .recordingStarted: _ = NSSound(named: "Tink")?.play()
         case .recordingStopped: _ = NSSound(named: "Morse")?.play()
+        case .noFocusedInput: _ = NSSound(named: "Pop")?.play()
         case .alert: NSSound.beep()
         }
     }

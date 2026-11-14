@@ -4,6 +4,28 @@ import Testing
 
 @testable import TidyParrotCore
 
+struct FocusedInputTests {
+    @Test(arguments: ["AXTextField", "AXTextArea", "AXComboBox"])
+    func textRolesMayTakeText(role: String) {
+        #expect(AccessibilityFocusedInput.mayTakeText(role: role))
+    }
+
+    /// Electron, web pages and Alacritty report these while you're editing, so they mustn't refuse.
+    @Test(arguments: ["AXWindow", "AXGroup", "AXWebArea", "AXScrollArea", "AXTable", "AXUnknown", "SomeCustomRole"])
+    func containersAndUnknownRolesMayTakeText(role: String) {
+        #expect(AccessibilityFocusedInput.mayTakeText(role: role))
+    }
+
+    @Test func noAnswerMayTakeText() {
+        #expect(AccessibilityFocusedInput.mayTakeText(role: nil))
+    }
+
+    @Test(arguments: AccessibilityFocusedInput.nonTextRoles.sorted())
+    func controlsCannotTakeText(role: String) {
+        #expect(!AccessibilityFocusedInput.mayTakeText(role: role))
+    }
+}
+
 struct HelperProtocolTests {
     @Test func frameIsLittleEndianLengthThenFloat32Samples() {
         let data = HelperProtocol.frame(AudioClip(samples: [1.0, -0.5]))

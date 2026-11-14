@@ -9,6 +9,7 @@ struct DictationControllerTests {
     let engine = FakeEngine()
     let inserter = FakeInserter()
     let permissions = FakePermissions()
+    let focus = FakeFocus()
     let sounds = SoundLog()
 
     final class SoundLog {
@@ -19,7 +20,7 @@ struct DictationControllerTests {
         DictationController(
             dependencies: .init(
                 hotkey: hotkey, recorder: recorder, engine: engine, inserter: inserter, permissions: permissions,
-                play: { sounds.played.append($0) }),
+                focus: focus, play: { sounds.played.append($0) }),
             settings: settings)
     }
 
@@ -115,6 +116,52 @@ struct DictationControllerTests {
         hotkey.send(.toggle)
         #expect(!recorder.isRecording)
         #expect(sounds.played == [.alert])
+    }
+
+    @Test func toggleWithoutFocusedInputPopsQuietlyAndDoesNotRecord() {
+        focus.hasTextInput = false
+        let controller = makeReadyController()
+        var messages: [String] = []
+        var seen: [AppStatus] = []
+        controller.onMessage = { messages.append($0) }
+        controller.onStatusChange = { seen.append($0) }
+        hotkey.send(.toggle)
+        #expect(!recorder.isRecording)
+        #expect(sounds.played == [.noFocusedInput])
+        #expect(messages.isEmpty)
+        #expect(seen.isEmpty)  // so the recording pill never appears
+        #expect(controller.status == .ready(cleanMode: true))
+    }
+
+    @Test func toggleWithFocusedInputAgainStartsRecording() {
+        focus.hasTextInput = false
+        let controller = makeReadyController()
+        hotkey.send(.toggle)
+        focus.hasTextInput = true
+        hotkey.send(.toggle)
+        #expect(controller.status == .listening)
+        #expect(sounds.played == [.noFocusedInput, .recordingStarted])
+    }
+
+    /// Focus is checked only to start: the stopping tap must always stop, wherever focus has moved.
+    @Test func stoppingTapIgnoresFocus() async throws {
+        let controller = makeReadyController()
+        hotkey.send(.toggle)
+        focus.hasTextInput = false
+        hotkey.send(.toggle)
+        #expect(!recorder.isRecording)
+        #expect(focus.checkCount == 1)
+        try await waitUntil { controller.status == .ready(cleanMode: true) }
+        #expect(sounds.played == [.recordingStarted, .recordingStopped])
+    }
+
+    @Test func toggleBeforeEngineReadyAlertsWithoutCheckingFocus() {
+        focus.hasTextInput = false
+        let controller = makeController()
+        controller.start()
+        hotkey.send(.toggle)
+        #expect(sounds.played == [.alert])
+        #expect(focus.checkCount == 0)
     }
 
     @Test func toggleWithoutMicPermissionAlertsWithMessage() {

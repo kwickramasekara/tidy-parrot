@@ -14,6 +14,8 @@ struct DictationSettings: Sendable {
 enum FeedbackSound: Equatable, Sendable {
     case recordingStarted
     case recordingStopped
+    /// Dictation refused because there's nowhere to paste. Distinct from `alert`: nothing is broken.
+    case noFocusedInput
     /// A refused or failed dictation.
     case alert
 }
@@ -28,6 +30,7 @@ final class DictationController {
         var engine: any TranscriptionEngine
         var inserter: any TextInserting
         var permissions: any PermissionsProviding
+        var focus: any FocusedInputChecking
         var play: @MainActor (FeedbackSound) -> Void
     }
 
@@ -109,6 +112,11 @@ final class DictationController {
     private func startRecording() {
         guard case .ready = engineState else {
             deps.play(.alert)
+            return
+        }
+        // A quiet refusal, with no message: it's an everyday miss, not a fault to explain.
+        guard deps.focus.hasFocusedTextInput() else {
+            deps.play(.noFocusedInput)
             return
         }
         guard deps.permissions.isMicrophoneAuthorized else {

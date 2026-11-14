@@ -24,6 +24,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
                 engine: Self.makeEngine(),
                 inserter: PasteboardTextInserter(),
                 permissions: SystemPermissions(),
+                focus: AccessibilityFocusedInput(),
                 play: SystemSounds.play
             ))
         let menu = StatusMenu(

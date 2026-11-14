@@ -2,7 +2,8 @@
 
 Tap **fn**, speak, tap **fn** again: the text is pasted into whatever field has focus, with "um"s, "uh"s and
 stutters removed. Press **Esc** while recording to discard it. A chime plays when the mic opens (Tink) and
-closes (Morse).
+closes (Morse). If what has focus can't take text, such as a button or a Finder file list, you hear a Pop and
+recording doesn't start. Apps that don't say what has focus, such as Slack or VS Code, still record.
 
 macOS also acts on a plain fn tap (emoji picker, input source or Apple Dictation), and Tidy Parrot can't block that.
 Set System Settings → Keyboard → **Press 🌐 key to** → **Do Nothing**.

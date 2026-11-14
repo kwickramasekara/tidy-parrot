@@ -46,8 +46,9 @@ GlobalHotkeyMonitor ─toggle/cancel────────► DictationControl
     `HelperProtocol`, the wire format, and `UnavailableEngine`, a stand-in used when the Info.plist keys from
     `scripts/build.sh` are missing.
   - `Input/`: `HotkeySource` protocol, `GlobalHotkeyMonitor` (NSEvent), and `TapToToggleDetector`, the tap logic.
-  - `Output/`: `TextInserting` protocol and `PasteboardTextInserter`. `SystemSounds` maps each `FeedbackSound` to a
-    built-in macOS sound.
+  - `Output/`: `TextInserting` protocol and `PasteboardTextInserter`. `FocusedInputChecking` protocol and
+    `AccessibilityFocusedInput`, which refuses recording only for roles that never take text, and fails open
+    otherwise. `SystemSounds` maps each `FeedbackSound` to a built-in macOS sound.
   - `Permissions/`: `PermissionsProviding` protocol and `SystemPermissions` (microphone and Accessibility).
   - `UI/`: `StatusMenu` and `RecordingIndicator`, which show what they're told. `RecordingIndicator` is the pill
     with level bars and a timer, shown while listening. It must never take focus, or the paste lands in the wrong
@@ -86,9 +87,9 @@ When stdin closes, the helper exits. The helper writes logs to stderr, which goe
   - Avoid `@unchecked Sendable`. If you can't, explain why it's safe in a `// Safety:` comment, as in
     `HelperConnection`.
 - **Dependency injection by initializer.** Every system boundary reaches `DictationController` through
-  `Dependencies`: hotkey, mic, engine, paste and permissions as small protocols, and feedback sounds as a closure.
-  Tests use the fakes in `Tests/.../Fakes.swift`. Don't reach for singletons or `shared` from inside the core. `Log`
-  is the one deliberate exception: a file append, and tests may write to the real log.
+  `Dependencies`: hotkey, mic, engine, paste, permissions and focus as small protocols, and feedback sounds as a
+  closure. Tests use the fakes in `Tests/.../Fakes.swift`. Don't reach for singletons or `shared` from inside the
+  core. `Log` is the one deliberate exception: a file append, and tests may write to the real log.
 - **Internal by default.** Only `AppDelegate` is `public`, because `main.swift` is in another module. Tests use
   `@testable import`.
 - **Keep protocols small.** Add a method only when a caller needs it. Extend an existing type rather than adding a

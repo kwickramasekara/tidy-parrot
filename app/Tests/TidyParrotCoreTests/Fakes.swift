@@ -82,6 +82,17 @@ final class FakePermissions: PermissionsProviding {
     }
 }
 
+@MainActor
+final class FakeFocus: FocusedInputChecking {
+    var hasTextInput = true
+    private(set) var checkCount = 0
+
+    func hasFocusedTextInput() -> Bool {
+        checkCount += 1
+        return hasTextInput
+    }
+}
+
 struct FakeError: LocalizedError {
     var errorDescription: String? { "fake failure" }
 }
