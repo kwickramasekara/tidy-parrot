@@ -31,7 +31,7 @@ the Swift commands outside your sandbox.
 GlobalHotkeyMonitor ─toggle/cancel────────► DictationController ─► MicrophoneRecorder  (AVAudioEngine → 16 kHz clip)
                                                    │              ─► TranscriptionEngine (HelperProcessEngine ⇄ Python)
                                                    │              ─► PasteboardTextInserter (clipboard + ⌘V, then restore)
-                                                   └─ AppStatus / messages ─► StatusMenu
+                                                   └─ AppStatus / messages ─► StatusMenu, RecordingIndicator
 ```
 
 - **`app/Sources/TidyParrot/main.swift`**: starts `NSApplication`. Nothing else goes here.
@@ -40,6 +40,8 @@ GlobalHotkeyMonitor ─toggle/cancel────────► DictationControl
   - `Dictation/`: `DictationController` owns all state and runs the pipeline. `DictationSettings` holds its tunables.
     `AppStatus` is the derived status and its menu text.
   - `Audio/`: `AudioRecording` protocol, `MicrophoneRecorder`, `Resampler`, and `AudioClip` (mono float32 at 16 kHz).
+    `AudioLevel` maps loudness to 0–1, and `LevelMeter` turns the tap's audio into one level per 50 ms for the
+    on-screen meter.
   - `Transcription/`: `TranscriptionEngine` protocol and `HelperProcessEngine`, the Python subprocess. Also
     `HelperProtocol`, the wire format, and `UnavailableEngine`, a stand-in used when the Info.plist keys from
     `scripts/build.sh` are missing.
@@ -47,7 +49,9 @@ GlobalHotkeyMonitor ─toggle/cancel────────► DictationControl
   - `Output/`: `TextInserting` protocol and `PasteboardTextInserter`. `SystemSounds` maps each `FeedbackSound` to a
     built-in macOS sound.
   - `Permissions/`: `PermissionsProviding` protocol and `SystemPermissions` (microphone and Accessibility).
-  - `UI/`: `StatusMenu`. It shows what it's told and holds no logic.
+  - `UI/`: `StatusMenu` and `RecordingIndicator`, which show what they're told. `RecordingIndicator` is the pill
+    with level bars and a timer, shown while listening. It must never take focus, or the paste lands in the wrong
+    app. `LevelBars` holds its animation as pure state.
   - `Support/`: `Log`.
 - **`helper/`**:
   - `tidy_parrot_helper.py` loads the model once and serves clips.

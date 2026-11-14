@@ -18,8 +18,14 @@ final class MicrophoneRecorder: AudioRecording {
     private var engine: AVAudioEngine?
     private var inputSampleRate: Double = 0
     private let buffer = SampleBuffer()
+    private let meter = LevelMeter()
 
     var isRecording: Bool { engine != nil }
+
+    /// The next input level, from 0 to 1, for the on-screen meter. See `LevelMeter.take()`.
+    func takeLevel() -> Float {
+        meter.take()
+    }
 
     func start() throws {
         let engine = AVAudioEngine()
@@ -29,7 +35,8 @@ final class MicrophoneRecorder: AudioRecording {
 
         inputSampleRate = format.sampleRate
         buffer.reset()
-        input.installTap(onBus: 0, bufferSize: 1024, format: format, block: Self.tap(into: buffer))
+        meter.reset(sampleRate: format.sampleRate)
+        input.installTap(onBus: 0, bufferSize: 1024, format: format, block: Self.tap(into: buffer, meter: meter))
         engine.prepare()
         try engine.start()
         self.engine = engine
@@ -55,11 +62,13 @@ final class MicrophoneRecorder: AudioRecording {
 
     /// Built outside the main actor: the tap runs on the audio thread, and a closure formed in a main-actor
     /// method would inherit that isolation and trap when Core Audio calls it.
-    private nonisolated static func tap(into buffer: SampleBuffer) -> AVAudioNodeTapBlock {
+    private nonisolated static func tap(into buffer: SampleBuffer, meter: LevelMeter) -> AVAudioNodeTapBlock {
         { pcm, _ in
             guard let channels = pcm.floatChannelData else { return }
             // First channel only: speech is mono, and multi-channel interfaces put the mic on channel 1.
-            buffer.append(UnsafeBufferPointer(start: channels[0], count: Int(pcm.frameLength)))
+            let chunk = UnsafeBufferPointer(start: channels[0], count: Int(pcm.frameLength))
+            buffer.append(chunk)
+            meter.record(chunk)
         }
     }
 }

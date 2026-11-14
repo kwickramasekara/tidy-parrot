@@ -213,6 +213,29 @@ struct DictationControllerTests {
         #expect(controller.status == .failed("Helper stopped (status 1)"))
     }
 
+    enum RecordingEnd: CaseIterable {
+        case tap, tooShort, cancel, stop
+    }
+
+    /// The on-screen level meter follows the published status, so every way a recording ends must publish.
+    @Test(arguments: RecordingEnd.allCases)
+    func everyRecordingEndPublishesStatusOtherThanListening(end: RecordingEnd) {
+        if end == .tooShort { recorder.clipToReturn = AudioClip(samples: [0]) }
+        let controller = makeReadyController()
+        var seen: [AppStatus] = []
+        controller.onStatusChange = { seen.append($0) }
+        hotkey.send(.toggle)
+        #expect(seen == [.listening])
+
+        switch end {
+        case .tap, .tooShort: hotkey.send(.toggle)
+        case .cancel: hotkey.send(.cancel)
+        case .stop: controller.stop()
+        }
+        #expect(seen.count == 2)
+        #expect(seen.last != .listening)
+    }
+
     @Test func stopClosesMicAndStopsEngine() {
         let controller = makeReadyController()
         hotkey.send(.toggle)

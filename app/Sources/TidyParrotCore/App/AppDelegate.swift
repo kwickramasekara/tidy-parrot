@@ -7,6 +7,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var controller: DictationController?
     private var menu: StatusMenu?
+    private var indicator: RecordingIndicator?
 
     public override init() {
         super.init()
@@ -15,10 +16,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     public func applicationDidFinishLaunching(_ notification: Notification) {
         Log.write("launched")
 
+        let recorder = MicrophoneRecorder()
         let controller = DictationController(
             dependencies: .init(
                 hotkey: GlobalHotkeyMonitor(key: Self.hotkey),
-                recorder: MicrophoneRecorder(),
+                recorder: recorder,
                 engine: Self.makeEngine(),
                 inserter: PasteboardTextInserter(),
                 permissions: SystemPermissions(),
@@ -29,11 +31,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             onRestartEngine: { [weak controller] in controller?.restartEngine() },
             onOpenLog: { NSWorkspace.shared.open(Log.url) }
         )
-        controller.onStatusChange = { [weak menu] in menu?.show($0) }
+        let indicator = RecordingIndicator(takeLevel: { [weak recorder] in recorder?.takeLevel() ?? 0 })
+        controller.onStatusChange = { [weak menu, weak indicator] status in
+            menu?.show(status)
+            indicator?.setVisible(status == .listening)
+        }
         controller.onMessage = { [weak menu] in menu?.showMessage($0) }
 
         self.controller = controller
         self.menu = menu
+        self.indicator = indicator
         controller.start()
     }
 

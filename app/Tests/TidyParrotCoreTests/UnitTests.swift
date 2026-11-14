@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 
@@ -153,5 +154,271 @@ struct UnavailableEngineTests {
         await #expect(throws: TranscriptionError.notRunning) {
             try await engine.transcribe(AudioClip(samples: []))
         }
+    }
+}
+
+struct AudioLevelTests {
+    func rms(atDecibels decibels: Float) -> Float { pow(10, decibels / 20) }
+
+    @Test(arguments: [Float(0), -1, .nan])
+    func silenceOrBrokenInputIsZero(rms: Float) {
+        #expect(AudioLevel.normalized(rms: rms) == 0)
+    }
+
+    @Test func belowFloorIsZeroAndAboveCeilingIsOne() {
+        #expect(AudioLevel.normalized(rms: rms(atDecibels: -70)) == 0)
+        #expect(AudioLevel.normalized(rms: 1) == 1)
+    }
+
+    @Test func scalesLinearlyInDecibelsBetweenFloorAndCeiling() {
+        let floor = AudioLevel.floorDecibels
+        let ceiling = AudioLevel.ceilingDecibels
+        #expect(abs(AudioLevel.normalized(rms: rms(atDecibels: floor + 0.01))) < 0.01)
+        #expect(abs(AudioLevel.normalized(rms: rms(atDecibels: (floor + ceiling) / 2)) - 0.5) < 0.01)
+        #expect(abs(AudioLevel.normalized(rms: rms(atDecibels: ceiling - 0.01)) - 1) < 0.01)
+    }
+}
+
+struct LevelMeterTests {
+    /// At 1 kHz a 50 ms window is 50 samples, which keeps the arithmetic readable.
+    let window = 50
+    /// Constant amplitudes whose levels are 100% and 50%.
+    let loud: Float = 1
+    let medium = Float(pow(10, -32.5 / 20))
+
+    func makeMeter() -> LevelMeter {
+        let meter = LevelMeter()
+        meter.reset(sampleRate: 1_000)
+        return meter
+    }
+
+    /// One buffer made of one full window per amplitude.
+    func windows(_ amplitudes: [Float]) -> [Float] {
+        amplitudes.flatMap { [Float](repeating: $0, count: window) }
+    }
+
+    func record(_ meter: LevelMeter, _ samples: [Float]) {
+        samples.withUnsafeBufferPointer { meter.record($0) }
+    }
+
+    /// Rounded to whole percent, so levels compare exactly.
+    func percent(_ level: Float) -> Float { (level * 100).rounded() }
+
+    /// The bug this guards against: the mic delivers ~100 ms buffers, the bars read every 50 ms, and every other
+    /// read used to find nothing new and show silence.
+    @Test func bufferSpanningTwoWindowsGivesTwoLevelsAndThenHoldsTheLast() {
+        let meter = makeMeter()
+        record(meter, windows([loud, medium]))
+        #expect(percent(meter.take()) == 100)
+        #expect(percent(meter.take()) == 50)
+        #expect(percent(meter.take()) == 50)  // no new audio yet isn't silence
+    }
+
+    @Test func windowFilledAcrossSmallBuffersAveragesAllItsSamples() {
+        let meter = makeMeter()
+        record(meter, [Float](repeating: medium, count: 25))
+        record(meter, [Float](repeating: 0, count: 20))
+        #expect(meter.take() == 0)  // 45 of 50 samples: nothing complete yet
+        record(meter, [Float](repeating: 0, count: 5))
+        // Half the window at medium, half silent: 3 dB below medium (43%), not medium itself (50%).
+        #expect(percent(meter.take()) == 43)
+    }
+
+    @Test func readerKeepingPaceLosesNothing() {
+        let meter = makeMeter()
+        var taken: [Float] = []
+        for amplitudes: [Float] in [[0, medium], [loud, 0], [medium, loud]] {
+            record(meter, windows(amplitudes))
+            taken += [meter.take(), meter.take()]
+        }
+        #expect(taken.map(percent) == [0, 50, 100, 0, 50, 100])
+    }
+
+    @Test func largestDocumentedBufferKeepsEveryLevel() {
+        let meter = makeMeter()
+        let amplitudes: [Float] = [0, medium, loud, 0, medium, loud, 0, medium]  // 400 ms
+        record(meter, windows(amplitudes))
+        let taken = amplitudes.map { _ in meter.take() }
+        #expect(taken.map(percent) == [0, 50, 100, 0, 50, 100, 0, 50])
+    }
+
+    /// After a main-thread stall the reader skips to the latest buffer instead of trailing the mic for the rest of
+    /// the recording.
+    @Test func readerThatFellBehindSkipsToTheLatestBuffer() {
+        let meter = makeMeter()
+        record(meter, windows([0, 0]))
+        record(meter, windows([medium, medium]))
+        record(meter, windows([loud, medium]))
+        #expect(percent(meter.take()) == 100)
+        #expect(percent(meter.take()) == 50)
+    }
+
+    /// Skipping ahead happens only when a buffer completes a window, so a small buffer can't discard a level the
+    /// reader hasn't taken yet.
+    @Test func bufferCompletingNoWindowKeepsWaitingLevels() {
+        let meter = makeMeter()
+        record(meter, windows([loud]))
+        record(meter, [Float](repeating: 0, count: 20))
+        #expect(percent(meter.take()) == 100)
+    }
+
+    @Test func resetClearsWaitingLevelsAndPartialWindow() {
+        let meter = makeMeter()
+        record(meter, [Float](repeating: loud, count: window + 30))
+        meter.reset(sampleRate: 1_000)
+        #expect(meter.take() == 0)
+        record(meter, windows([0]))
+        #expect(meter.take() == 0)  // the 30 loud samples didn't carry over into this window
+    }
+}
+
+struct LevelBarsTests {
+    let step = LevelBars.stepDuration
+
+    @Test func startsAsAFlatRowOfDots() {
+        let bars = LevelBars(count: 3)
+        #expect(bars.levels == [0, 0, 0])
+        #expect(bars.heights == [0, 0, 0])
+        #expect(bars.scroll == 0)
+    }
+
+    @Test func newLevelEntersOnTheRightAsADotAndTheRestShiftLeft() {
+        var bars = LevelBars(count: 3)
+        for _ in 0..<60 { bars.advance(by: 1.0 / 60) { 0.5 } }
+        let heights = bars.heights
+        bars.push(0.75)
+        #expect(bars.levels == [0.5, 0.5, 0.75])
+        #expect(bars.heights == Array(heights.dropFirst()) + [0])
+    }
+
+    @Test func partOfAStepSlidesWithoutSampling() {
+        var bars = LevelBars(count: 3)
+        var samples = 0
+        bars.advance(by: step * 0.4) {
+            samples += 1
+            return 1
+        }
+        #expect(samples == 0)
+        #expect(abs(bars.scroll - 0.4) < 1e-9)
+        #expect(bars.levels == [0, 0, 0])
+    }
+
+    @Test func eachCompletedStepSamplesOnceAndKeepsTheRemainder() {
+        var bars = LevelBars(count: 3)
+        var samples = 0
+        bars.advance(by: step * 0.6) {
+            samples += 1
+            return 1
+        }
+        bars.advance(by: step * 0.6) {
+            samples += 1
+            return 1
+        }
+        #expect(samples == 1)
+        #expect(abs(bars.scroll - 0.2) < 1e-9)
+        #expect(bars.levels == [0, 0, 1])
+    }
+
+    @Test func heightGrowsSteadilyTowardItsLevelWithoutOvershooting() {
+        var bars = LevelBars(count: 1)
+        bars.push(0.8)
+        var previous: Float = 0
+        for _ in 0..<9 {  // nine tenths of a step, so no new bar replaces this one
+            bars.advance(by: step / 10) { 0 }
+            #expect(bars.heights[0] > previous)
+            #expect(bars.heights[0] < 0.8)
+            previous = bars.heights[0]
+        }
+    }
+
+    @Test func barsSettleNearTheirLevelBeforeScrollingOut() {
+        var bars = LevelBars(count: 16)
+        for _ in 0..<120 { bars.advance(by: 1.0 / 60) { 0.5 } }
+        // The oldest bar has had about 0.75 s to settle; the newest has only just started growing.
+        #expect(abs(bars.heights[0] - 0.5) < 0.01)
+        #expect(bars.heights[15] < bars.heights[14])
+    }
+
+    @Test func longStallIsCappedSoBarsDontLurch() {
+        var bars = LevelBars(count: 4)
+        var samples = 0
+        bars.advance(by: 10) {
+            samples += 1
+            return 1
+        }
+        #expect(samples == Int(LevelBars.maximumFrameTime / step))
+    }
+
+    @Test func negativeFrameTimeChangesNothing() {
+        var bars = LevelBars(count: 2)
+        bars.push(1)
+        let before = bars
+        bars.advance(by: -1) { 1 }
+        #expect(bars == before)
+    }
+}
+
+@MainActor
+struct RecordingIndicatorTests {
+    @Test(arguments: [
+        NSRect(x: 0, y: 0, width: 1512, height: 944),
+        // A second display left of and above the main one has negative x and a non-zero y.
+        NSRect(x: -1920, y: 200, width: 1920, height: 1055),
+    ])
+    func sitsAtTopCentreOfVisibleFrame(visibleFrame: NSRect) {
+        let frame = RecordingIndicator.frame(in: visibleFrame)
+        #expect(frame.size == RecordingIndicator.size)
+        #expect(abs(frame.midX - visibleFrame.midX) <= 0.5)
+        #expect(frame.maxY == visibleFrame.maxY - RecordingIndicator.topMargin)
+        #expect(visibleFrame.contains(frame))
+    }
+
+    @Test(arguments: [
+        (Duration.zero, "0:00"),
+        (.milliseconds(9_900), "0:09"),  // rounds down, like a stopwatch
+        (.seconds(65), "1:05"),
+        (.seconds(180), "3:00"),
+        (.seconds(-1), "0:00"),
+    ])
+    func elapsedTextIsMinutesAndPaddedSeconds(elapsed: Duration, expected: String) {
+        #expect(RecordingIndicator.elapsedText(elapsed) == expected)
+    }
+}
+
+/// Uses a view in no window, so nothing appears on screen and the display link never fires on its own.
+@MainActor
+struct LevelBarsViewTests {
+    let view = LevelBarsView(barCount: 4)
+
+    @Test func framesAdvanceTheBarsWhileRunning() {
+        view.start { 1 }
+        view.frame(at: 10)  // the first frame only sets the clock
+        #expect(view.bars == LevelBars(count: 4))
+        view.frame(at: 10 + LevelBars.stepDuration)
+        #expect(view.bars.levels.last == 1)
+    }
+
+    @Test func stopEndsTheAnimationAndFlattensTheBars() {
+        #expect(!view.isRunning)
+        view.start { 1 }
+        #expect(view.isRunning)
+        view.frame(at: 0)
+        view.frame(at: 0.05)
+        view.stop()
+        #expect(!view.isRunning)
+        #expect(view.bars == LevelBars(count: 4))
+
+        view.frame(at: 1)
+        view.frame(at: 1.05)
+        #expect(view.bars == LevelBars(count: 4))  // stopped: frames do nothing
+    }
+
+    @Test func restartDoesNotCountTheTimeSpentStopped() {
+        view.start { 1 }
+        view.frame(at: 0)
+        view.stop()
+        view.start { 1 }
+        view.frame(at: 60)  // a minute later: must not be treated as one long frame
+        #expect(view.bars == LevelBars(count: 4))
     }
 }
