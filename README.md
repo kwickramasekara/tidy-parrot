@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="app/Resources/AppIcon.png" width="160" alt="Tidy Parrot icon: a smiling blue-and-gold macaw drawn in colored pencil">
+</p>
+
 # Tidy Parrot
 
 Tap **fn**, speak, tap **fn** again: the text is pasted into whatever field has focus, with "um"s, "uh"s and
