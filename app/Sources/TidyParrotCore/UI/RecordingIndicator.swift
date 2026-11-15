@@ -1,9 +1,23 @@
 import AppKit
 
-/// The pill at the top centre of the screen with level bars and the elapsed time, shown while recording.
+/// The pill at the top centre of the screen, shown from the tap until the recording ends: a spinner and flat bars
+/// while the mic starts, then moving level bars and the elapsed time.
 /// It must never take focus or activate the app: the paste after the stopping tap goes to whichever app is frontmost.
 @MainActor
 final class RecordingIndicator {
+    /// What the pill shows.
+    enum Mode: Equatable {
+        case hidden, starting, listening
+
+        init(status: AppStatus) {
+            switch status {
+            case .starting: self = .starting
+            case .listening: self = .listening
+            case .needsAccessibility, .transcribing, .loading, .ready, .vocabularyProblem, .failed: self = .hidden
+            }
+        }
+    }
+
     static let size = NSSize(width: 132, height: 36)
     /// Gap between the menu bar and the pill.
     static let topMargin: CGFloat = 8
@@ -15,16 +29,33 @@ final class RecordingIndicator {
     private let takeLevel: @MainActor () -> Float
     private let bars = LevelBarsView(barCount: barCount)
     private let time = NSTextField(labelWithString: elapsedText(.zero))
-    private lazy var panel = Self.makePanel(content: Self.makePill(bars: bars, time: time))
+    private let spinner = NSProgressIndicator()
+    private lazy var panel = Self.makePanel(content: Self.makePill(bars: bars, time: time, spinner: spinner))
     private var startedAt = ContinuousClock.now
+    private var mode = Mode.hidden
 
     init(takeLevel: @escaping @MainActor () -> Float) {
         self.takeLevel = takeLevel
     }
 
-    func setVisible(_ visible: Bool) {
-        guard visible != bars.isRunning else { return }
-        visible ? show() : hide()
+    func show(_ mode: Mode) {
+        guard mode != self.mode else { return }
+        if self.mode == .hidden { orderFront() }
+        self.mode = mode
+        switch mode {
+        case .hidden: hide()
+        case .starting:
+            bars.stop()
+            time.isHidden = true
+            spinner.startAnimation(nil)
+        case .listening:
+            spinner.stopAnimation(nil)
+            time.isHidden = false
+            // The clock starts with the recording, not with the pill.
+            startedAt = .now
+            time.stringValue = Self.elapsedText(.zero)
+            bars.start { [weak self] in self?.step() ?? 0 }
+        }
     }
 
     /// Top centre of `visibleFrame`, which already excludes the menu bar and the notch.
@@ -42,19 +73,17 @@ final class RecordingIndicator {
         return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 
-    private func show() {
+    /// Before the bars start, so their display link syncs to the screen the panel is on.
+    private func orderFront() {
         guard let screen = Self.screenUnderPointer() else { return }
-        startedAt = .now
-        time.stringValue = Self.elapsedText(.zero)
         panel.setFrame(Self.frame(in: screen.visibleFrame), display: true)
         // Not makeKeyAndOrderFront: that would make the panel key and take keyboard focus from the user's app.
         panel.orderFrontRegardless()
-        // After ordering front, so the display link syncs to the screen the panel is on.
-        bars.start { [weak self] in self?.step() ?? 0 }
     }
 
     private func hide() {
         bars.stop()
+        spinner.stopAnimation(nil)
         panel.orderOut(nil)
     }
 
@@ -72,7 +101,7 @@ final class RecordingIndicator {
         return NSScreen.screens.first { NSMouseInRect(pointer, $0.frame, false) } ?? NSScreen.main
     }
 
-    private static func makePill(bars: NSView, time: NSTextField) -> NSView {
+    private static func makePill(bars: NSView, time: NSTextField, spinner: NSProgressIndicator) -> NSView {
         let pill = NSView(frame: NSRect(origin: .zero, size: size))
         pill.wantsLayer = true
         if let layer = pill.layer {
@@ -98,8 +127,19 @@ final class RecordingIndicator {
             width: size.width - padding.left - padding.right - timeSize.width - gap,
             height: size.height - padding.top - padding.bottom)
 
+        // In the time's place while the mic starts, centred on it.
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.isDisplayedWhenStopped = false
+        let spinnerSize = spinner.fittingSize
+        spinner.frame = NSRect(
+            x: (time.frame.midX - spinnerSize.width / 2).rounded(),
+            y: ((size.height - spinnerSize.height) / 2).rounded(),
+            width: spinnerSize.width, height: spinnerSize.height)
+
         pill.addSubview(bars)
         pill.addSubview(time)
+        pill.addSubview(spinner)
         return pill
     }
 

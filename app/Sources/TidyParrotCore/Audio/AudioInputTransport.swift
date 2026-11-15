@@ -10,15 +10,21 @@ enum AudioInputTransport {
             && transportType != kAudioDeviceTransportTypeBluetoothLE
     }
 
-    /// The default input's transport type, or nil if Core Audio can't say. This is the device `AVAudioEngine`'s input
-    /// node opens. `AudioHardwareSystem` would be simpler but needs macOS 26.
-    static func defaultInputTransportType() -> UInt32? {
+    /// The system's default input, or nil if there is none. The recorder reads it once per open and passes it on, so
+    /// the warm-up check and the unit can't disagree about the device. `AudioHardwareSystem` would be simpler but
+    /// needs macOS 26.
+    static func defaultInputDevice() -> AudioDeviceID? {
         guard
             let device = property(
                 of: AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultInputDevice),
             device != kAudioObjectUnknown
         else { return nil }
-        return property(of: device, kAudioDevicePropertyTransportType)
+        return device
+    }
+
+    /// The device's transport type, or nil if Core Audio can't say.
+    static func transportType(of device: AudioDeviceID) -> UInt32? {
+        property(of: device, kAudioDevicePropertyTransportType)
     }
 
     /// Both properties read here are a `UInt32` (`AudioDeviceID` is one).

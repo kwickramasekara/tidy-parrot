@@ -46,7 +46,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         let indicator = RecordingIndicator(takeLevel: { [weak recorder] in recorder?.takeLevel() ?? 0 })
         controller.onStatusChange = { [weak menu, weak indicator] status in
             menu?.show(status)
-            indicator?.setVisible(status == .listening)
+            indicator?.show(RecordingIndicator.Mode(status: status))
         }
         controller.onMessage = { [weak menu] in menu?.showMessage($0) }
 

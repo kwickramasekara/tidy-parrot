@@ -1,8 +1,10 @@
 # Tidy Parrot
 
 Tap **fn**, speak, tap **fn** again: the text is pasted into whatever field has focus, with "um"s, "uh"s and
-stutters removed. Press **Esc** while recording to discard it. A chime plays when the mic opens (Tink) and
-closes (Morse). If what has focus can't take text, such as a button or a Finder file list, you hear a Pop and
+stutters removed. Press **Esc** while recording to discard it. The pill at the top of the screen appears on the tap, with a
+spinner until the mic can hear you, then a chime plays (Tink) and the timer starts. Another chime plays when the mic
+closes (Morse). A tap or Esc during the spinner cancels quietly, and a mic that stays silent for 3 s (muted, or
+AirPods held by another device) ends the start with an alert. If what has focus can't take text, such as a button or a Finder file list, you hear a Pop and
 recording doesn't start. Apps that don't say what has focus, such as Slack or VS Code, still record. If a
 dictation went nowhere, click into the field and choose **Paste Last Dictation** from the menu. The last dictation
 is kept in memory only, until you quit.
@@ -82,8 +84,8 @@ a real voice and mic. The list builds in about a second after the model loads; d
 ## How it works
 
 ```
-fn down ─► AVAudioEngine starts (fresh each time), closed again unless the press is a tap
-fn up   ─► chime once the mic is open; it stays open until the next tap
+fn down ─► an input-only Core Audio unit starts (fresh each time), closed again unless the press is a tap
+fn up   ─► pill with a spinner; chime once the mic hears real audio; it stays open until the next tap
 fn tap  ─► resample to 16 kHz mono ─► helper over stdin ─► text over stdout
         ─► clipboard + ⌘V ─► your clipboard restored 0.5 s later
 ```
@@ -93,7 +95,9 @@ fn tap  ─► resample to 16 kHz mono ─► helper over stdin ─► text over
   Only a plain fn tap toggles: fn used with another key (fn+arrows, fn+Delete) is left alone. The mic starts opening
   on fn key-down to save the length of the tap. A press that turns out to be a shortcut closes it again without a
   sound, though macOS may briefly show its mic indicator. Bluetooth mics open only on the tap, because opening one
-  switches the headset to its call profile. Esc discards the recording, and the focused app still gets the Esc. Recordings stop after 3 minutes in case the stopping tap is
+  switches the headset to its call profile. The unit opens only the mic, not the output device, and the chime waits
+  for three buffers of real audio in a row, because AirPods send silence for about a second while their call link
+  comes up. Esc discards the recording, and the focused app still gets the Esc. Recordings stop after 3 minutes in case the stopping tap is
   missed, since password fields hide key events from other apps.
 - `helper/`: `tidy_parrot_helper.py` loads the 8-bit model with clean mode once and warms it up, then answers one
   clip at a time over the protocol in `wire_protocol.py`. If the app quits or crashes, the helper's stdin closes and

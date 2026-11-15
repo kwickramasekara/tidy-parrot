@@ -19,8 +19,8 @@ enum AudioLevel {
 }
 
 /// Turns the mic's audio into one level per `AudioLevel.windowDuration`, shared between the audio thread
-/// (recording) and the main actor (taking). Windows are counted in samples because the tap's buffer size is only a
-/// hint: AVAudioEngine typically delivers about 100 ms at a time.
+/// (recording) and the main actor (taking). Windows are counted in samples because buffer sizes follow the device's
+/// I/O size, often about 10 ms, and vary between devices.
 final class LevelMeter: Sendable {
     private struct State {
         var windowFrames = 1
@@ -37,8 +37,8 @@ final class LevelMeter: Sendable {
     func reset(sampleRate: Double) {
         state.withLock { state in
             state = State(windowFrames: max(1, Int(sampleRate * AudioLevel.windowDuration)))
-            // A 400 ms buffer, the largest AVAudioEngine documents for taps, makes 8 levels. Reserving them keeps the
-            // audio thread from allocating.
+            // Room for 8 levels, a 400 ms buffer, far more than a device's I/O size. Reserving them keeps the audio
+            // thread from allocating.
             state.ready.reserveCapacity(8)
         }
     }

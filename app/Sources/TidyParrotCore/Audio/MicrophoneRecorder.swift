@@ -1,4 +1,4 @@
-import AVFoundation
+import CoreAudio
 import Synchronization
 
 /// Each call takes its turn the moment it's made, and calls run in that order, so a `stop` or `cancel` never overtakes
@@ -10,17 +10,31 @@ protocol AudioRecording: AnyObject {
     /// Opens the mic in the background ahead of a likely tap, unless the input is Bluetooth or unknown. Errors are
     /// left for `start` to report.
     func warmUp()
-    /// Opens the mic, or waits for an earlier call to. `opened` gets whether it was already open.
-    func start(_ opened: @escaping @MainActor @Sendable (Result<Bool, any Error>) -> Void)
+    /// Opens the mic, or waits for an earlier call to, then waits until it hears real audio (`MicrophoneReadiness`).
+    /// `opened` gets when each part of that happened. It never comes if the mic stays silent: the caller decides how
+    /// long to wait, and a `cancel` drops it.
+    func start(_ opened: @escaping @MainActor @Sendable (Result<MicrophoneStart, any Error>) -> Void)
     /// Stops recording. `stopped` gets the clip, already converted to `AudioClip.sampleRate`.
     func stop(_ stopped: @escaping @MainActor @Sendable (AudioClip) -> Void)
     /// Closes the mic and forgets what it heard.
     func cancel()
 }
 
+/// When each part of starting the mic happened, for the `start:` log.
+struct MicrophoneStart: Sendable {
+    /// Building began: at fn key-down for a warm-up, otherwise after the tap.
+    var opened: ContinuousClock.Instant
+    var built: ContinuousClock.Instant
+    /// The start call returned.
+    var running: ContinuousClock.Instant
+    var firstBuffer: ContinuousClock.Instant
+    /// `MicrophoneReadiness` heard real audio.
+    var ready: ContinuousClock.Instant
+}
+
 /// Records from the current default input only around a dictation: from fn key-down, if the press turns out to be a
-/// tap, until the next tap. A fresh engine per recording means device changes between dictations (a Teams call
-/// switching mics, AirPods connecting) never touch a long-lived engine, and the mic is closed the rest of the time.
+/// tap, until the next tap. A fresh input unit per recording means device changes between dictations (a Teams call
+/// switching mics, AirPods connecting) never touch a long-lived unit, and the mic is closed the rest of the time.
 @MainActor
 final class MicrophoneRecorder: AudioRecording {
     private let session = MicrophoneSession()
@@ -32,17 +46,21 @@ final class MicrophoneRecorder: AudioRecording {
 
     func warmUp() {
         session.run { session in
-            guard AudioInputTransport.allowsWarmUp(transportType: AudioInputTransport.defaultInputTransportType())
+            guard let device = AudioInputTransport.defaultInputDevice(),
+                AudioInputTransport.allowsWarmUp(transportType: AudioInputTransport.transportType(of: device))
             else { return }
             // A failure here repeats when the tap calls `start`, which reports it.
-            _ = try? session.open()
+            try? session.warmUp(device)
         }
     }
 
-    func start(_ opened: @escaping @MainActor @Sendable (Result<Bool, any Error>) -> Void) {
+    func start(_ opened: @escaping @MainActor @Sendable (Result<MicrophoneStart, any Error>) -> Void) {
         session.run { session in
-            let result = Result { try session.open() }
-            Task { @MainActor in opened(result) }
+            do {
+                try session.start(whenReady: { start in Task { @MainActor in opened(.success(start)) } })
+            } catch {
+                Task { @MainActor in opened(.failure(error)) }
+            }
         }
     }
 
@@ -58,67 +76,95 @@ final class MicrophoneRecorder: AudioRecording {
     }
 }
 
-/// The engine and what it hears. Opening a mic blocks for 0.1–0.7 s, so all engine work runs on `queue`, off the
-/// main actor, one call at a time.
+/// The input unit and what it hears. Opening a mic blocks for up to half a second, so all unit work runs on `queue`,
+/// off the main actor, one call at a time.
 private final class MicrophoneSession: @unchecked Sendable {
-    // Safety: `engine` and `inputSampleRate` are used only on `queue`; `buffer` and `meter` are Sendable.
+    // Safety: `unit` and `startup` are used only on `queue`; `buffer`, `meter`, `gate` and `InputUnit` are Sendable.
     let meter = LevelMeter()
     private let buffer = SampleBuffer()
-    private var engine: AVAudioEngine?
-    private var inputSampleRate: Double = 0
+    private let gate = ReadinessGate()
+    private var unit: InputUnit?
+    /// When the open unit was built and started.
+    private var startup: Startup?
+    private struct Startup {
+        var opened, built, running: ContinuousClock.Instant
+    }
     private let queue = DispatchQueue(label: "tidyparrot.microphone")
 
     func run(_ work: @escaping @Sendable (MicrophoneSession) -> Void) {
         queue.async { [self] in work(self) }
     }
 
-    /// Returns whether the mic was already open.
-    func open() throws -> Bool {
-        guard engine == nil else { return true }
-        let engine = AVAudioEngine()
-        let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else { throw RecorderError.noInput }
+    /// Opens `device` ahead of a likely tap, unless a mic is already open.
+    func warmUp(_ device: AudioDeviceID) throws {
+        guard startup == nil else { return }
+        try openUnit(device)
+    }
 
-        inputSampleRate = format.sampleRate
+    /// Opens the default input unless a mic is already open. `whenReady` gets when each part of the start happened
+    /// once the mic hears real audio: on the audio thread, or on this queue if it already has.
+    func start(whenReady: @escaping @Sendable (MicrophoneStart) -> Void) throws {
+        let startup = try startup ?? openUnit(nil)
+        gate.whenReady { firstBuffer, ready in
+            whenReady(
+                MicrophoneStart(
+                    opened: startup.opened, built: startup.built, running: startup.running, firstBuffer: firstBuffer,
+                    ready: ready))
+        }
+    }
+
+    @discardableResult
+    private func openUnit(_ device: AudioDeviceID?) throws -> Startup {
+        guard let device = device ?? AudioInputTransport.defaultInputDevice() else { throw RecorderError.noInput }
+        let opened = ContinuousClock.now
+        let unit = try InputUnit(device: device, onSamples: Self.samples(into: buffer, meter: meter, gate: gate))
         buffer.reset()
-        meter.reset(sampleRate: format.sampleRate)
-        input.installTap(onBus: 0, bufferSize: 1024, format: format, block: Self.tap(into: buffer, meter: meter))
-        engine.prepare()
-        try engine.start()
-        self.engine = engine
-        return false
+        meter.reset(sampleRate: unit.sampleRate)
+        gate.reset()
+        let built = ContinuousClock.now
+        do {
+            try unit.start()
+        } catch {
+            unit.dispose()
+            throw error
+        }
+        self.unit = unit
+        let startup = Startup(opened: opened, built: built, running: .now)
+        self.startup = startup
+        return startup
     }
 
     /// Closes the mic and returns what it recorded, or an empty clip if it wasn't open.
     func close() -> AudioClip {
-        guard stopEngine() else { return AudioClip(samples: []) }
-        return AudioClip(samples: Resampler.resample(buffer.drain(), from: inputSampleRate))
+        guard let sampleRate = closeUnit() else { return AudioClip(samples: []) }
+        return AudioClip(samples: Resampler.resample(buffer.drain(), from: sampleRate))
     }
 
     func discard() {
-        stopEngine()
+        closeUnit()
         buffer.reset()
     }
 
+    /// Returns the closed unit's sample rate, or nil if none was open.
     @discardableResult
-    private func stopEngine() -> Bool {
-        guard let engine else { return false }
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        self.engine = nil
-        return true
+    private func closeUnit() -> Double? {
+        guard let unit else { return nil }
+        unit.dispose()
+        self.unit = nil
+        startup = nil
+        gate.reset()
+        return unit.sampleRate
     }
 
-    /// Built outside any actor: the tap runs on the audio thread, and a closure formed in an actor-isolated method
-    /// would inherit that isolation and trap when Core Audio calls it.
-    private static func tap(into buffer: SampleBuffer, meter: LevelMeter) -> AVAudioNodeTapBlock {
-        { pcm, _ in
-            guard let channels = pcm.floatChannelData else { return }
-            // First channel only: speech is mono, and multi-channel interfaces put the mic on channel 1.
-            let chunk = UnsafeBufferPointer(start: channels[0], count: Int(pcm.frameLength))
+    /// Built outside any actor: the unit calls it on the audio thread, and a closure formed in an actor-isolated
+    /// method would inherit that isolation and trap when Core Audio calls it.
+    private static func samples(
+        into buffer: SampleBuffer, meter: LevelMeter, gate: ReadinessGate
+    ) -> @Sendable (UnsafeBufferPointer<Float>) -> Void {
+        { chunk in
             buffer.append(chunk)
             meter.record(chunk)
+            gate.observe(chunk)
         }
     }
 }
@@ -145,6 +191,13 @@ final class SampleBuffer: Sendable {
 
 enum RecorderError: LocalizedError {
     case noInput
+    /// A Core Audio call failed while setting up the mic. `step` says which, in words.
+    case coreAudio(step: String, status: OSStatus)
 
-    var errorDescription: String? { "No microphone input available" }
+    var errorDescription: String? {
+        switch self {
+        case .noInput: "No microphone input available"
+        case .coreAudio(let step, let status): "Couldn't \(step) (Core Audio error \(status))"
+        }
+    }
 }

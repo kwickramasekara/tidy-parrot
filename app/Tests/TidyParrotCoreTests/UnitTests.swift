@@ -1,6 +1,7 @@
 import AppKit
 import CoreAudio
 import Foundation
+import Synchronization
 import Testing
 
 @testable import TidyParrotCore
@@ -208,6 +209,7 @@ struct AppStatusTests {
     @Test(arguments: [
         (AppStatus.needsAccessibility, true),
         (.failed("Helper stopped"), true),
+        (.starting, false),
         (.listening, false),
         (.transcribing, false),
         (.loading, false),
@@ -323,6 +325,135 @@ struct AudioLevelTests {
         #expect(abs(AudioLevel.normalized(rms: rms(atDecibels: floor + 0.01))) < 0.01)
         #expect(abs(AudioLevel.normalized(rms: rms(atDecibels: (floor + ceiling) / 2)) - 0.5) < 0.01)
         #expect(abs(AudioLevel.normalized(rms: rms(atDecibels: ceiling - 0.01)) - 1) < 0.01)
+    }
+}
+
+struct MicrophoneReadinessTests {
+    static let loud: Float = 0.01
+    static let silent: Float = 0
+
+    /// Which buffer, counting from 1, made the mic ready, or nil if none did.
+    func readyAt(_ peaks: [Float]) -> Int? {
+        var readiness = MicrophoneReadiness()
+        let transitions = peaks.indices.filter { readiness.observe(peak: peaks[$0]) }
+        #expect(transitions.count <= 1)
+        return transitions.first.map { $0 + 1 }
+    }
+
+    @Test(arguments: [
+        ([loud, loud, loud], 3),
+        ([silent, silent, loud, loud, loud, loud], 5),
+        // A Bluetooth headset sends stray samples before its link is up: a gap starts the count again.
+        ([loud, silent, loud, loud, silent, loud, loud, loud], 8),
+        ([loud, loud, loud, loud, loud], 3),
+    ])
+    func readyAfterThreeLoudBuffersInARow(peaks: [Float], buffer: Int) {
+        #expect(readyAt(peaks) == buffer)
+    }
+
+    @Test(arguments: [
+        [loud, loud],
+        [loud, silent, loud, silent, loud],
+        // Below the threshold: digital silence with rounding noise, not a mic.
+        [Float](repeating: 0.000_001, count: 10),
+        [Float](repeating: .nan, count: 10),
+        [Float](repeating: silent, count: 300),
+    ])
+    func neverReadyWithoutRealAudio(peaks: [Float]) {
+        #expect(readyAt(peaks) == nil)
+    }
+}
+
+@MainActor
+struct StartLogTests {
+    /// Milliseconds after an arbitrary origin, so each row reads as a timeline.
+    nonisolated static let origin = ContinuousClock.now
+    nonisolated static func at(_ milliseconds: Int) -> ContinuousClock.Instant { origin + .milliseconds(milliseconds) }
+
+    nonisolated static func start(opened: Int, built: Int, running: Int, firstBuffer: Int, ready: Int)
+        -> MicrophoneStart
+    {
+        MicrophoneStart(
+            opened: at(opened), built: at(built), running: at(running), firstBuffer: at(firstBuffer), ready: at(ready))
+    }
+
+    @Test(arguments: [
+        // Warmed on fn key-down: the mic opened before the tap's key-up.
+        (
+            start(opened: 5, built: 15, running: 45, firstBuffer: 95, ready: 125), Optional(0), 100, 130,
+            "start: key-down → chime 130 ms, key-up → chime 30 ms"
+                + " (warm; build 10 ms, start 30 ms, first buffer +50 ms, ready +30 ms)"
+        ),
+        // Bluetooth skips the warm-up: key-down is known, but the mic opened after the tap.
+        (
+            start(opened: 102, built: 110, running: 140, firstBuffer: 160, ready: 1_260), 0, 100, 1_265,
+            "start: key-down → chime 1265 ms, key-up → chime 1165 ms"
+                + " (cold; build 8 ms, start 30 ms, first buffer +20 ms, ready +1100 ms)"
+        ),
+        // No key-down seen: nothing to measure from but the tap.
+        (
+            start(opened: 102, built: 110, running: 140, firstBuffer: 160, ready: 200), nil, 100, 205,
+            "start: key-up → chime 105 ms (cold; build 8 ms, start 30 ms, first buffer +20 ms, ready +40 ms)"
+        ),
+    ])
+    func saysWhereTheTimeWent(
+        start: MicrophoneStart, pressed: Int?, released: Int, chime: Int, expected: String
+    ) {
+        let log = DictationController.startLog(
+            start, pressedAt: pressed.map(Self.at), releasedAt: Self.at(released), chimeAt: Self.at(chime))
+        #expect(log == expected)
+    }
+}
+
+struct ReadinessGateTests {
+    /// Counts the waiter's calls, which may come from any thread.
+    final class Calls: Sendable {
+        private let times = Mutex<[(ContinuousClock.Instant, ContinuousClock.Instant)]>([])
+        var count: Int { times.withLock { $0.count } }
+        var first: (ContinuousClock.Instant, ContinuousClock.Instant)? { times.withLock { $0.first } }
+        func record(_ firstBuffer: ContinuousClock.Instant, _ ready: ContinuousClock.Instant) {
+            times.withLock { $0.append((firstBuffer, ready)) }
+        }
+    }
+
+    func send(_ peak: Float, to gate: ReadinessGate, buffers: Int = 1) {
+        let samples = [Float](repeating: peak, count: 160)
+        for _ in 0..<buffers { samples.withUnsafeBufferPointer { gate.observe($0) } }
+    }
+
+    /// A mic warmed up on fn key-down is usually ready before the tap asks.
+    @Test func waiterAfterReadyIsAnsweredAtOnce() {
+        let gate = ReadinessGate()
+        let calls = Calls()
+        send(0, to: gate)
+        send(0.01, to: gate, buffers: 3)
+        gate.whenReady { calls.record($0, $1) }
+        #expect(calls.count == 1)
+        if let (firstBuffer, ready) = calls.first { #expect(firstBuffer < ready) }
+    }
+
+    @Test func waiterBeforeReadyIsAnsweredOnceWhenReady() {
+        let gate = ReadinessGate()
+        let calls = Calls()
+        gate.whenReady { calls.record($0, $1) }
+        send(0, to: gate, buffers: 5)
+        send(0.01, to: gate, buffers: 2)
+        #expect(calls.count == 0)
+        send(0.01, to: gate, buffers: 5)
+        #expect(calls.count == 1)
+    }
+
+    /// Closing the mic drops the waiter, so a later unit's audio can't answer a discarded start.
+    @Test func resetForgetsTheWaiterAndTheReadiness() {
+        let gate = ReadinessGate()
+        let calls = Calls()
+        send(0.01, to: gate, buffers: 3)
+        gate.reset()
+        gate.whenReady { calls.record($0, $1) }
+        #expect(calls.count == 0)
+        gate.reset()
+        send(0.01, to: gate, buffers: 3)
+        #expect(calls.count == 0)
     }
 }
 
@@ -529,6 +660,20 @@ struct RecordingIndicatorTests {
     ])
     func elapsedTextIsMinutesAndPaddedSeconds(elapsed: Duration, expected: String) {
         #expect(RecordingIndicator.elapsedText(elapsed) == expected)
+    }
+
+    @Test(arguments: [
+        (AppStatus.starting, RecordingIndicator.Mode.starting),
+        (.listening, .listening),
+        (.needsAccessibility, .hidden),
+        (.transcribing, .hidden),
+        (.loading, .hidden),
+        (.ready(cleanMode: true), .hidden),
+        (.vocabularyProblem("line 3"), .hidden),
+        (.failed("Helper stopped"), .hidden),
+    ])
+    func pillShowsOnlyWhileTheMicIsInUse(status: AppStatus, mode: RecordingIndicator.Mode) {
+        #expect(RecordingIndicator.Mode(status: status) == mode)
     }
 }
 

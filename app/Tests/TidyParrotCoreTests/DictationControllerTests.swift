@@ -93,7 +93,7 @@ struct DictationControllerTests {
         hotkey.send(.toggle)
         try await waitUntil { !inserter.inserted.isEmpty }
 
-        #expect(seen == [.listening, .ready(cleanMode: true), .transcribing, .ready(cleanMode: true)])
+        #expect(seen == [.starting, .listening, .ready(cleanMode: true), .transcribing, .ready(cleanMode: true)])
         #expect(recorder.calls == [.warmUp, .start, .stop])
 
         #expect(engine.received.count == 1)
@@ -316,15 +316,18 @@ struct DictationControllerTests {
         #expect(messages.first?.hasPrefix("Microphone access is off") == true)
     }
 
+    /// The pill showed for the start, so the failure hides it.
     @Test func recorderStartFailureAlerts() async throws {
         recorder.startError = FakeError()
         let controller = makeReadyController()
         var messages: [String] = []
+        var seen: [AppStatus] = []
         controller.onMessage = { messages.append($0) }
+        controller.onStatusChange = { seen.append($0) }
         hotkey.send(.toggle)
         try await waitUntil { !messages.isEmpty }
         #expect(sounds.played == [.alert])
-        #expect(controller.status == .ready(cleanMode: true))
+        #expect(seen == [.starting, .ready(cleanMode: true)])
         #expect(messages == ["Mic error: fake failure"])
     }
 
@@ -349,7 +352,7 @@ struct DictationControllerTests {
         try await tapToStart(controller)
         await controller.finishRecording()?.value
         #expect(engine.received.isEmpty)
-        #expect(seen == [.listening, .ready(cleanMode: true)])  // never shows Transcribing…
+        #expect(seen == [.starting, .listening, .ready(cleanMode: true)])  // never shows Transcribing…
         #expect(sounds.played == [.recordingStarted, .recordingStopped])  // the mic still opened and closed
         #expect(controller.status == .ready(cleanMode: true))
     }
@@ -417,14 +420,14 @@ struct DictationControllerTests {
         var seen: [AppStatus] = []
         controller.onStatusChange = { seen.append($0) }
         try await tapToStart(controller)
-        #expect(seen == [.listening])
+        #expect(seen == [.starting, .listening])
 
         switch end {
         case .tap, .tooShort: hotkey.send(.toggle)
         case .cancel: hotkey.send(.cancel)
         case .stop: controller.stop()
         }
-        #expect(seen.count == 2)
+        #expect(seen.count == 3)
         #expect(seen.last != .listening)
     }
 
@@ -457,7 +460,7 @@ struct DictationControllerTests {
         hotkey.tap()
         try await waitUntil { controller.status == .listening }
         #expect(sounds.played == [.recordingStarted])
-        #expect(seen == [.listening])
+        #expect(seen == [.starting, .listening])
         #expect(recorder.calls == [.warmUp, .start])
 
         await controller.finishRecording()?.value
@@ -501,7 +504,9 @@ struct DictationControllerTests {
             controller = makeReadyController()
         }
         var messages: [String] = []
+        var seen: [AppStatus] = []
         controller.onMessage = { messages.append($0) }
+        controller.onStatusChange = { seen.append($0) }
 
         hotkey.send(.pressBegan)
         #expect(sounds.played.isEmpty)
@@ -509,6 +514,7 @@ struct DictationControllerTests {
 
         hotkey.send(.toggle)
         #expect(recorder.calls.isEmpty)
+        #expect(!seen.contains(.starting))  // a refusal never shows the pill
         switch refusal {
         case .engineLoading:
             #expect(sounds.played == [.alert])
@@ -592,8 +598,8 @@ struct DictationControllerTests {
         case tap, cancel, stop
     }
 
-    /// Nothing was heard and no chime has played yet, so every way out of a start is silent, and the start's late
-    /// reply doesn't revive it.
+    /// Nothing was heard and no chime has played yet, so every way out of a start is silent, but it hides the pill,
+    /// and the start's late reply doesn't revive it.
     @Test(arguments: EndWhileOpening.allCases)
     func endingWhileTheMicOpensIsSilent(end: EndWhileOpening) async throws {
         recorder.holdStart = true
@@ -614,8 +620,7 @@ struct DictationControllerTests {
         #expect(recorder.calls == [.start, .cancel])
         #expect(!recorder.isOpen)
         #expect(sounds.played.isEmpty)
-        #expect(seen.isEmpty)
-        #expect(controller.status == .ready(cleanMode: true))
+        #expect(seen == [.starting, .ready(cleanMode: true)])
     }
 
     /// Events handled back to back, e.g. after a main-thread stall: each recorder call must take its turn in that
@@ -664,18 +669,74 @@ struct DictationControllerTests {
         #expect(sounds.played == [.recordingStarted])
     }
 
-    /// The chime means the mic is open: it waits for the start, however long that takes.
-    @Test func chimeWaitsForTheMicToOpen() async throws {
+    /// The pill shows on the tap, with a spinner; the chime means the mic hears you, so it waits for the start,
+    /// however long that takes.
+    @Test func tapShowsStartingUntilTheMicIsReady() async throws {
         recorder.holdStart = true
         let controller = makeReadyController()
+        var seen: [AppStatus] = []
+        controller.onStatusChange = { seen.append($0) }
         hotkey.send(.toggle)
         try await waitUntil { recorder.calls == [.start] }
         try await Task.sleep(for: .milliseconds(20))
         #expect(sounds.played.isEmpty)
-        #expect(controller.status == .ready(cleanMode: true))
+        #expect(seen == [.starting])
 
         recorder.releaseStart()
         try await waitUntil { controller.status == .listening }
         #expect(sounds.played == [.recordingStarted])
+        #expect(seen == [.starting, .listening])
+    }
+
+    /// A muted mic, or AirPods another device holds, sends only silence: fail rather than chime over a dead mic.
+    @Test func startThatNeverHearsAudioFailsAfterTheLimit() async throws {
+        recorder.holdStart = true
+        var settings = DictationSettings()
+        settings.readyLimit = .milliseconds(20)
+        let controller = makeReadyController(settings: settings)
+        var seen: [AppStatus] = []
+        var messages: [String] = []
+        controller.onStatusChange = { seen.append($0) }
+        controller.onMessage = { messages.append($0) }
+        hotkey.send(.toggle)
+        try await waitUntil { !messages.isEmpty }
+
+        #expect(recorder.calls == [.start, .cancel])
+        #expect(sounds.played == [.alert])
+        #expect(seen == [.starting, .ready(cleanMode: true)])
+        #expect(messages.first?.hasPrefix("Mic error: no sound from the microphone") == true)
+
+        recorder.releaseStart()
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(sounds.played == [.alert])
+        #expect(controller.status == .ready(cleanMode: true))
+    }
+
+    /// The limit is for the start only: a dictation that started keeps going past it.
+    @Test func readyLimitEndsWithTheStart() async throws {
+        var settings = DictationSettings()
+        settings.readyLimit = .milliseconds(20)
+        let controller = makeReadyController(settings: settings)
+        try await tapToStart(controller)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(sounds.played == [.recordingStarted])
+        #expect(controller.status == .listening)
+        #expect(recorder.calls == [.warmUp, .start])
+    }
+
+    /// Dictating again while the last one transcribes: the pill must still show for the new start.
+    @Test func startingOutranksTranscribing() async throws {
+        engine.holdTranscription = true
+        let controller = makeReadyController()
+        try await tapToStart(controller)
+        hotkey.send(.toggle)
+        try await waitUntil { controller.status == .transcribing }
+
+        recorder.holdStart = true
+        hotkey.send(.toggle)
+        try await waitUntil { controller.status == .starting }
+        recorder.releaseStart()
+        try await waitUntil { controller.status == .listening }
+        engine.releaseTranscription()
     }
 }

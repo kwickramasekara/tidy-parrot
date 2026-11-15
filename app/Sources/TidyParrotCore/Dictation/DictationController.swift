@@ -8,6 +8,9 @@ struct DictationSettings: Sendable {
     var maximumClipDuration: Duration = .seconds(180)
     /// Closes a mic opened on fn key-down if no tap follows: fn held on its own, or a key-up a password field hid.
     var warmUpLimit: Duration = .seconds(2)
+    /// Fails a start whose mic sends no real audio in this long: a muted mic, or AirPods another device holds. AirPods
+    /// need about 1.1 s to start hearing.
+    var readyLimit: Duration = .seconds(3)
     /// Appended to each dictation so consecutive ones don't run together ("Friday.Please").
     var trailingText = " "
 }
@@ -50,9 +53,12 @@ final class DictationController {
         /// fn is down on its own and the mic is opening, but the press may yet be a shortcut, so nothing shows.
         /// `limit` closes the mic if no tap follows.
         case warming(pressedAt: ContinuousClock.Instant, limit: Task<Void, Never>)
-        /// A tap is in and the mic is opening; the chime waits until it's open. `attempt` tells this start apart from
-        /// one that was discarded, whose reply may still arrive. `pressedAt` is nil when there was no warm-up.
-        case starting(attempt: Int, pressedAt: ContinuousClock.Instant?, releasedAt: ContinuousClock.Instant)
+        /// A tap is in and the pill shows a spinner while the mic starts; the chime waits until it hears real audio.
+        /// `attempt` tells this start apart from one that was discarded, whose reply may still arrive. `pressedAt` is
+        /// nil when there was no warm-up. `limit` fails a start that never hears anything.
+        case starting(
+            attempt: Int, pressedAt: ContinuousClock.Instant?, releasedAt: ContinuousClock.Instant,
+            limit: Task<Void, Never>)
         /// The mic is open and the pill is showing. `limit` stops a recording that was left running.
         case recording(limit: Task<Void, Never>)
     }
@@ -72,7 +78,11 @@ final class DictationController {
 
     var status: AppStatus {
         if !hasAccessibility { return .needsAccessibility }
-        if case .recording = phase { return .listening }
+        switch phase {
+        case .starting: return .starting
+        case .recording: return .listening
+        case .idle, .warming: break
+        }
         if inFlight > 0 { return .transcribing }
         switch engineState {
         case .loading: return .loading
@@ -205,30 +215,52 @@ final class DictationController {
     private func begin(pressedAt pressed: ContinuousClock.Instant?, releasedAt released: ContinuousClock.Instant) {
         attempts += 1
         let attempt = attempts
-        phase = .starting(attempt: attempt, pressedAt: pressed, releasedAt: released)
+        let limit = after(settings.readyLimit) { [weak self] in self?.startNeverHeard(attempt: attempt) }
+        phase = .starting(attempt: attempt, pressedAt: pressed, releasedAt: released, limit: limit)
+        publishStatus()
         deps.recorder.start { [weak self] result in self?.started(attempt: attempt, result) }
     }
 
-    private func started(attempt: Int, _ result: Result<Bool, any Error>) {
-        guard case .starting(attempt, let pressed, let released) = phase else { return }
-        let wasOpen: Bool
+    private func started(attempt: Int, _ result: Result<MicrophoneStart, any Error>) {
+        guard case .starting(attempt, let pressed, let released, let limit) = phase else { return }
+        limit.cancel()
+        let start: MicrophoneStart
         switch result {
-        case .success(let open): wasOpen = open
+        case .success(let value): start = value
         case .failure(let error):
             phase = .idle
+            publishStatus()
             fail("Mic error: \(error.localizedDescription)")
             return
         }
         deps.play(.recordingStarted)
-        // Press-to-chime latency, to see what warming the mic on key-down saves.
-        let keyUp = "key-up → chime \(Self.milliseconds(.now - released)) ms"
-        if wasOpen, let pressed {
-            Log.write("start: key-down → chime \(Self.milliseconds(.now - pressed)) ms, \(keyUp)")
-        } else {
-            Log.write("start: \(keyUp) (cold)")
-        }
+        Log.write(Self.startLog(start, pressedAt: pressed, releasedAt: released, chimeAt: .now))
         phase = .recording(limit: after(settings.maximumClipDuration) { [weak self] in self?.finishRecording() })
         publishStatus()
+    }
+
+    /// Press-to-chime latency and where it went: building and starting the unit, then waiting for its first buffer and
+    /// for real audio. To see what warming the mic on key-down saves and what each mic costs.
+    static func startLog(
+        _ start: MicrophoneStart, pressedAt pressed: ContinuousClock.Instant?,
+        releasedAt released: ContinuousClock.Instant, chimeAt chime: ContinuousClock.Instant
+    ) -> String {
+        let warm = start.opened < released
+        let keyDown = pressed.map { "key-down → chime \(milliseconds(chime - $0)) ms, " } ?? ""
+        let steps = [
+            "build \(milliseconds(start.built - start.opened)) ms",
+            "start \(milliseconds(start.running - start.built)) ms",
+            "first buffer +\(milliseconds(start.firstBuffer - start.running)) ms",
+            "ready +\(milliseconds(start.ready - start.firstBuffer)) ms",
+        ]
+        return "start: \(keyDown)key-up → chime \(milliseconds(chime - released)) ms"
+            + " (\(warm ? "warm" : "cold"); \(steps.joined(separator: ", ")))"
+    }
+
+    private func startNeverHeard(attempt: Int) {
+        guard case .starting(attempt, _, _, _) = phase else { return }
+        discard()
+        fail("Mic error: no sound from the microphone. Check it isn't muted or in use on another device")
     }
 
     /// Why a dictation can't start, checked in this order. The engine comes first so a press while it loads costs no
@@ -316,14 +348,20 @@ final class DictationController {
         }
     }
 
-    /// Closes the mic and forgets the dictation without a sound or a status change.
+    /// Closes the mic and forgets the dictation without a sound. Publishes only when ending a start, whose pill shows
+    /// a spinner: ending a recording plays the stop sound before its caller publishes.
     private func discard() {
+        var wasStarting = false
         switch phase {
+        case .idle: break
         case .warming(_, let limit), .recording(let limit): limit.cancel()
-        case .idle, .starting: break
+        case .starting(_, _, _, let limit):
+            limit.cancel()
+            wasStarting = true
         }
         phase = .idle
         deps.recorder.cancel()
+        if wasStarting { publishStatus() }
     }
 
     private func fail(_ message: String) {

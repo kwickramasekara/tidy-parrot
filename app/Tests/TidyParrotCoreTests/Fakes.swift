@@ -31,24 +31,29 @@ final class FakeRecorder: AudioRecording {
     /// Holds `start`'s result until `releaseStart()`, to test what arrives while the mic is still opening.
     var holdStart = false
     private(set) var calls: [Call] = []
-    private(set) var isOpen = false
+    /// When the mic opened, while it's open.
+    private var openedAt: ContinuousClock.Instant?
+    var isOpen: Bool { openedAt != nil }
     private var heldStart: (() -> Void)?
 
     var cancelCount: Int { calls.filter { $0 == .cancel }.count }
 
     func warmUp() {
         calls.append(.warmUp)
-        if warmUpOpens { isOpen = true }
+        if warmUpOpens { openedAt = .now }
     }
 
-    func start(_ opened: @escaping @MainActor @Sendable (Result<Bool, any Error>) -> Void) {
+    func start(_ opened: @escaping @MainActor @Sendable (Result<MicrophoneStart, any Error>) -> Void) {
         calls.append(.start)
-        let result: Result<Bool, any Error>
+        let result: Result<MicrophoneStart, any Error>
         if let startError {
             result = .failure(startError)
         } else {
-            result = .success(isOpen)
-            isOpen = true
+            let openedAt = openedAt ?? .now
+            self.openedAt = openedAt
+            result = .success(
+                MicrophoneStart(
+                    opened: openedAt, built: openedAt, running: openedAt, firstBuffer: openedAt, ready: openedAt))
         }
         let deliver = { opened(result) }
         if holdStart { heldStart = deliver } else { Task { deliver() } }
@@ -61,14 +66,14 @@ final class FakeRecorder: AudioRecording {
 
     func stop(_ stopped: @escaping @MainActor @Sendable (AudioClip) -> Void) {
         calls.append(.stop)
-        isOpen = false
+        openedAt = nil
         let clip = clipToReturn
         Task { stopped(clip) }
     }
 
     func cancel() {
         calls.append(.cancel)
-        isOpen = false
+        openedAt = nil
     }
 }
 
@@ -88,9 +93,19 @@ final class FakeEngine: TranscriptionEngine {
 
     func stop() { stopCount += 1 }
 
+    /// Holds each transcription until `releaseTranscription()`, to test what happens while one runs.
+    var holdTranscription = false
+    private var heldTranscriptions: [CheckedContinuation<Void, Never>] = []
+
     func transcribe(_ clip: AudioClip) async throws -> Transcript {
         received.append(clip)
+        if holdTranscription { await withCheckedContinuation { heldTranscriptions.append($0) } }
         return try result.get()
+    }
+
+    func releaseTranscription() {
+        heldTranscriptions.forEach { $0.resume() }
+        heldTranscriptions.removeAll()
     }
 
     func emit(_ state: EngineState) { onStateChange?(state) }

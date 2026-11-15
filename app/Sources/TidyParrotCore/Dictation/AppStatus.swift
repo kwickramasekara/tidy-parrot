@@ -3,6 +3,8 @@ import Foundation
 /// What the app is doing, in priority order: a missing permission outranks everything else.
 enum AppStatus: Equatable, Sendable {
     case needsAccessibility
+    /// A tap is in and the mic is starting, but it hasn't heard real audio yet.
+    case starting
     case listening
     case transcribing
     case loading
@@ -17,6 +19,7 @@ enum AppStatus: Equatable, Sendable {
         switch self {
         case .needsAccessibility:
             (true, "Needs Accessibility permission: System Settings → Privacy & Security")
+        case .starting: (false, "Starting the mic… tap \(hotkey.displayName) or Esc to cancel")
         case .listening: (false, "Listening… tap \(hotkey.displayName) to insert, Esc to cancel")
         case .transcribing: (false, "Transcribing…")
         case .loading: (false, "Loading model…")

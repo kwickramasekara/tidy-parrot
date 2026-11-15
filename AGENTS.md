@@ -28,7 +28,7 @@ the Swift commands outside your sandbox.
 ## Architecture
 
 ```
-GlobalHotkeyMonitor ─press/toggle/cancel──► DictationController ─► MicrophoneRecorder  (AVAudioEngine → 16 kHz clip)
+GlobalHotkeyMonitor ─press/toggle/cancel──► DictationController ─► MicrophoneRecorder  (AUHAL unit → 16 kHz clip)
                                                    │              ─► TranscriptionEngine (HelperProcessEngine ⇄ Python)
                                                    │              ─► PasteboardTextInserter (clipboard + ⌘V, then restore)
                                                    └─ AppStatus / messages ─► StatusMenu, RecordingIndicator
@@ -38,12 +38,15 @@ GlobalHotkeyMonitor ─press/toggle/cancel──► DictationController ─► M
 - **`app/Sources/TidyParrotCore/`**: all app code, in one folder per concern:
   - `App/`: `AppDelegate` is the **composition root**, the only place that creates live implementations.
   - `Dictation/`: `DictationController` owns all state and runs the pipeline. Its private `Phase` (idle, warming,
-    starting, recording) is the one source of truth for where a dictation is. `DictationSettings` holds its tunables.
-    `AppStatus` is the derived status and its menu text. `Diagnostics` is what Option-clicking the menu bar icon shows.
+    starting, recording) is the one source of truth for where a dictation is. `starting` runs from the tap until the
+    mic hears real audio and shows as `AppStatus.starting`; `DictationSettings.readyLimit` fails a start that stays
+    silent. `DictationSettings` holds its tunables. `AppStatus` is the derived status and its menu text. `Diagnostics` is what Option-clicking the menu bar icon shows.
   - `Audio/`: `AudioRecording` protocol, `MicrophoneRecorder`, `Resampler`, and `AudioClip` (mono float32 at 16 kHz).
-    The recorder does all engine work on its own serial queue, in call order, because opening a mic blocks for up to
-    0.7 s. `AudioInputTransport` keeps fn key-down warm-up off Bluetooth inputs.
-    `AudioLevel` maps loudness to 0–1, and `LevelMeter` turns the tap's audio into one level per 50 ms for the
+    The recorder builds a fresh `InputUnit`, an input-only AUHAL unit on the default input, per dictation, and does
+    all unit work on its own serial queue, in call order, because opening a mic blocks for up to half a second.
+    `start` answers once `ReadinessGate` sees real audio (`MicrophoneReadiness`, a pure rule), never by waiting on
+    that queue. `AudioInputTransport` finds the default input and keeps fn key-down warm-up off Bluetooth inputs.
+    `AudioLevel` maps loudness to 0–1, and `LevelMeter` turns the mic's audio into one level per 50 ms for the
     on-screen meter.
   - `Transcription/`: `TranscriptionEngine` protocol and `HelperProcessEngine`, the Python subprocess. Also
     `HelperProtocol`, the wire format, and `UnavailableEngine`, a stand-in used when the Info.plist keys from
@@ -55,8 +58,8 @@ GlobalHotkeyMonitor ─press/toggle/cancel──► DictationController ─► M
     `AccessibilityFocusedInput`, which refuses recording only for roles that never take text, and fails open
     otherwise. `SystemSounds` maps each `FeedbackSound` to a built-in macOS sound.
   - `Permissions/`: `PermissionsProviding` protocol and `SystemPermissions` (microphone and Accessibility).
-  - `UI/`: `StatusMenu` and `RecordingIndicator`, which show what they're told. `RecordingIndicator` is the pill
-    with level bars and a timer, shown while listening. It must never take focus, or the paste lands in the wrong
+  - `UI/`: `StatusMenu` and `RecordingIndicator`, which show what they're told. `RecordingIndicator` is the pill:
+    a spinner while the mic starts, then level bars and a timer while listening. It must never take focus, or the paste lands in the wrong
     app. `LevelBars` holds its animation as pure state.
   - `Support/`: `Log`, and `VocabularyFile`, which owns the vocabulary path. The app passes it to the helper with
     `--vocabulary` and opens it from the menu; it never parses the file.
@@ -96,8 +99,9 @@ When stdin closes, the helper exits. The helper writes logs to stderr, which goe
 - **Swift 6 language mode, strict concurrency, zero warnings.**
   - UI, state and every protocol are `@MainActor`.
   - Blocking work goes off the main actor explicitly: the helper's pipe I/O runs on a serial `DispatchQueue`.
-  - The audio tap closure is built in a `nonisolated` function. A closure formed on the main actor inherits that
-    isolation, and it traps when Core Audio calls it on the audio thread.
+  - The closure the audio thread calls with samples is built in a `nonisolated` function. A closure formed on the
+    main actor inherits that isolation, and it traps when Core Audio calls it on the audio thread. `InputUnit`'s
+    input callback is a C function with no captures; it finds the unit through its context pointer.
   - Avoid `@unchecked Sendable`. If you can't, explain why it's safe in a `// Safety:` comment, as in
     `HelperConnection`.
 - **Dependency injection by initializer.** Every system boundary reaches `DictationController` through
