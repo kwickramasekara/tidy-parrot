@@ -24,7 +24,9 @@ A small menu-bar app in Swift, plus a Python helper that runs
 
 ## Setup
 
-Requires an Apple Silicon Mac on macOS 15 or later, Xcode, and Python 3.
+Requires an Apple Silicon Mac on macOS 15 or later, Xcode, and Python 3.10 or later. The `python3` that comes with
+macOS is 3.9, so install a newer one from [python.org](https://www.python.org/downloads/macos/) or Homebrew. Setup
+uses `python3` from your PATH; to use a different Python, run `PYTHON=/path/to/python3.12 make setup`.
 
 ```bash
 make setup          # Python venv + pinned model download (~806 MB, into helper/model)
