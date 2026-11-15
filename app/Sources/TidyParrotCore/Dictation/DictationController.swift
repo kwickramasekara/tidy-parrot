@@ -11,6 +11,9 @@ struct DictationSettings: Sendable {
     /// Fails a start whose mic sends no real audio in this long: a muted mic, or AirPods another device holds. AirPods
     /// need about 1.1 s to start hearing.
     var readyLimit: Duration = .seconds(3)
+    /// Stops the helper after this long with no dictation, to free the model's memory (1–1.6 GB). The next tap loads it
+    /// again while it records, which takes about a second.
+    var idleUnloadDelay: Duration = .seconds(30 * 60)
     /// Appended to each dictation so consecutive ones don't run together ("Friday.Please").
     var trailingText = " "
 }
@@ -45,7 +48,9 @@ final class DictationController {
 
     private let deps: Dependencies
     private let settings: DictationSettings
-    private var engineState = EngineState.loading
+    private var engineState = EngineState.loading {
+        didSet { updateIdleUnload() }
+    }
     private var hasAccessibility = false
     /// Where the controller is in a dictation. Transcriptions run alongside this (`inFlight`), so they aren't a phase.
     private enum Phase {
@@ -63,9 +68,15 @@ final class DictationController {
         case recording(limit: Task<Void, Never>)
     }
 
-    private var phase = Phase.idle
+    private var phase = Phase.idle {
+        didSet { updateIdleUnload() }
+    }
     private var attempts = 0
-    private var inFlight = 0
+    private var inFlight = 0 {
+        didSet { updateIdleUnload() }
+    }
+    /// Runs while `canUnloadModel` holds. Kept out of `Phase` because it spans transcriptions, which aren't phases.
+    private var idleUnload: Task<Void, Never>?
     /// Kept in memory only, never persisted, so it's gone on quit.
     private var lastDictation: String?
     private var lastTiming: Diagnostics.Timing?
@@ -86,6 +97,7 @@ final class DictationController {
         if inFlight > 0 { return .transcribing }
         switch engineState {
         case .loading: return .loading
+        case .unloaded: return .unloaded
         case .ready(let cleanMode, _):
             // Dictation still works with the previous terms, but a rejected save should be visible.
             if let problem = vocabulary?.problem { return .vocabularyProblem(problem) }
@@ -203,16 +215,27 @@ final class DictationController {
 
     private func commit(pressedAt pressed: ContinuousClock.Instant) {
         let released = ContinuousClock.now
-        // The helper may have stopped since key-down. Focus and permission were checked then, moments ago.
-        guard case .ready = engineState else {
+        // The helper may have failed since key-down. Focus and permission were checked then, moments ago.
+        guard engineAcceptsDictation else {
             discard()
-            present(.engineNotReady)
+            present(.engineFailed)
             return
         }
         begin(pressedAt: pressed, releasedAt: released)
     }
 
     private func begin(pressedAt pressed: ContinuousClock.Instant?, releasedAt released: ContinuousClock.Instant) {
+        // Loads while the mic records; the clip waits in the engine if the model isn't ready by the stopping tap.
+        if case .unloaded = engineState {
+            Log.write("reloading the model for a dictation")
+            deps.engine.start()
+            // It can fail at once, e.g. the helper's Python is gone; then nothing would transcribe the clip.
+            guard engineAcceptsDictation else {
+                discard()
+                present(.engineFailed)
+                return
+            }
+        }
         attempts += 1
         let attempt = attempts
         let limit = after(settings.readyLimit) { [weak self] in self?.startNeverHeard(attempt: attempt) }
@@ -263,22 +286,28 @@ final class DictationController {
         fail("Mic error: no sound from the microphone. Check it isn't muted or in use on another device")
     }
 
-    /// Why a dictation can't start, checked in this order. The engine comes first so a press while it loads costs no
+    /// Why a dictation can't start, checked in this order. The engine comes first so a press while it's failed costs no
     /// Accessibility call.
     private enum Refusal {
-        case engineNotReady, noFocusedInput, microphoneOff
+        case engineFailed, noFocusedInput, microphoneOff
     }
 
     private func refusal() -> Refusal? {
-        guard case .ready = engineState else { return .engineNotReady }
+        guard engineAcceptsDictation else { return .engineFailed }
         guard deps.focus.hasFocusedTextInput() else { return .noFocusedInput }
         guard deps.permissions.isMicrophoneAuthorized else { return .microphoneOff }
         return nil
     }
 
+    /// Only a failed engine refuses: a loading or unloaded one takes the clip once its model is ready.
+    private var engineAcceptsDictation: Bool {
+        guard case .failed = engineState else { return true }
+        return false
+    }
+
     private func present(_ refusal: Refusal) {
         switch refusal {
-        case .engineNotReady: deps.play(.alert)
+        case .engineFailed: deps.play(.alert)
         // A quiet refusal, with no message: it's an everyday miss, not a fault to explain.
         case .noFocusedInput: deps.play(.noFocusedInput)
         case .microphoneOff: fail("Microphone access is off: System Settings → Privacy & Security → Microphone")
@@ -368,6 +397,33 @@ final class DictationController {
         Log.write(message)
         onMessage?(message)
         deps.play(.alert)
+    }
+
+    // MARK: Idle unload
+
+    /// Nothing is going on and there's a model to free. Every change to the three inputs re-checks it, so no path
+    /// that ends a dictation can forget to start the delay.
+    private var canUnloadModel: Bool {
+        guard case .idle = phase, inFlight == 0, case .ready = engineState else { return false }
+        return true
+    }
+
+    private func updateIdleUnload() {
+        if canUnloadModel {
+            if idleUnload == nil {
+                idleUnload = after(settings.idleUnloadDelay) { [weak self] in self?.unloadIdleModel() }
+            }
+        } else {
+            idleUnload?.cancel()
+            idleUnload = nil
+        }
+    }
+
+    private func unloadIdleModel() {
+        idleUnload = nil
+        guard canUnloadModel else { return }
+        Log.write("unloading the model after \(Self.milliseconds(settings.idleUnloadDelay) / 1000) s idle")
+        deps.engine.stop()
     }
 
     /// Runs `action` after `duration` unless the task is cancelled first.

@@ -40,7 +40,9 @@ GlobalHotkeyMonitor ─press/toggle/cancel──► DictationController ─► M
   - `Dictation/`: `DictationController` owns all state and runs the pipeline. Its private `Phase` (idle, warming,
     starting, recording) is the one source of truth for where a dictation is. `starting` runs from the tap until the
     mic hears real audio and shows as `AppStatus.starting`; `DictationSettings.readyLimit` fails a start that stays
-    silent. `DictationSettings` holds its tunables. `AppStatus` is the derived status and its menu text. `Diagnostics` is what Option-clicking the menu bar icon shows.
+    silent. After `DictationSettings.idleUnloadDelay` with nothing going on (phase idle, no transcription, engine
+    ready), it stops the engine to free the model; the next tap starts it again while the mic records. Only a failed
+    engine refuses a tap. `DictationSettings` holds its tunables. `AppStatus` is the derived status and its menu text. `Diagnostics` is what Option-clicking the menu bar icon shows.
   - `Audio/`: `AudioRecording` protocol, `MicrophoneRecorder`, `Resampler`, and `AudioClip` (mono float32 at 16 kHz).
     The recorder builds a fresh `InputUnit`, an input-only AUHAL unit on the default input, per dictation, and does
     all unit work on its own serial queue, in call order, because opening a mic blocks for up to half a second.
@@ -51,6 +53,8 @@ GlobalHotkeyMonitor ─press/toggle/cancel──► DictationController ─► M
   - `Transcription/`: `TranscriptionEngine` protocol and `HelperProcessEngine`, the Python subprocess. Also
     `HelperProtocol`, the wire format, and `UnavailableEngine`, a stand-in used when the Info.plist keys from
     `scripts/build.sh` are missing. `VocabularyStatus` is what the engine reports about the vocabulary file.
+    `stop()` reports `EngineState.unloaded`. `transcribe` may be called while the engine loads: the clip waits behind
+    the ready line on `HelperConnection`'s serial queue, and fails as `notRunning` if the load fails.
   - `Input/`: `HotkeySource` protocol, `GlobalHotkeyMonitor` (NSEvent), and `TapToToggleDetector`, the tap logic. It
     sends `pressBegan` on fn key-down, then `toggle` for a tap or `pressAbandoned` once another key shows it's a
     shortcut.

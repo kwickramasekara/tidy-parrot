@@ -4,6 +4,8 @@ enum EngineState: Equatable, Sendable {
     case loading
     case ready(cleanMode: Bool, loadMilliseconds: Int)
     case failed(String)
+    /// Stopped on purpose, so the model's memory is free; `start()` loads it again.
+    case unloaded
 }
 
 /// The user's vocabulary file as the engine last reported it.
@@ -26,12 +28,15 @@ struct Transcript: Equatable, Sendable {
 /// (e.g. Core ML) would conform to this and be chosen in `AppDelegate`.
 @MainActor
 protocol TranscriptionEngine: AnyObject {
-    /// Called on every state change, starting with `.loading` from `start()`.
+    /// Called on every state change: `.loading` (or `.failed`) from `start()` and `.unloaded` from `stop()`, both before
+    /// they return, then whatever the load leads to.
     var onStateChange: ((EngineState) -> Void)? { get set }
     /// Called whenever the engine reports on the vocabulary, which can change at any time as the user edits it.
     var onVocabularyChange: ((VocabularyStatus) -> Void)? { get set }
     func start()
     func stop()
+    /// May be called while loading: the clip waits for the model, and fails if the load fails. Throws `notRunning` when
+    /// unloaded or failed.
     func transcribe(_ clip: AudioClip) async throws -> Transcript
 }
 
@@ -47,7 +52,7 @@ final class UnavailableEngine: TranscriptionEngine {
     }
 
     func start() { onStateChange?(.failed(reason)) }
-    func stop() {}
+    func stop() { onStateChange?(.unloaded) }
     func transcribe(_ clip: AudioClip) async throws -> Transcript {
         throw TranscriptionError.notRunning
     }

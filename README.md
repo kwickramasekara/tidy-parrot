@@ -9,14 +9,18 @@ recording doesn't start. Apps that don't say what has focus, such as Slack or VS
 dictation went nowhere, click into the field and choose **Paste Last Dictation** from the menu. The last dictation
 is kept in memory only, until you quit.
 
+After 30 minutes without a dictation, the model is unloaded to free its memory (1–1.6 GB), and the menu says so. The
+next tap records straight away while the model loads again, which takes about a second, so after a dictation of a
+few seconds you don't wait at all.
+
 Tech terms come out spelled the way you write them ("Datadog", "PostHog", "Next.js", "useEffect") because of a
 vocabulary list. See [Vocabulary](#vocabulary).
 
 macOS also acts on a plain fn tap (emoji picker, input source or Apple Dictation), and Tidy Parrot can't block that.
 Set System Settings → Keyboard → **Press 🌐 key to** → **Do Nothing**.
 
-A small menu-bar app in Swift, plus a Python helper that keeps
-[Fluid Speech Pro (MLX)](https://huggingface.co/FluidVoice-Labs/fluid-speech-pro-mlx) loaded with clean mode on.
+A small menu-bar app in Swift, plus a Python helper that runs
+[Fluid Speech Pro (MLX)](https://huggingface.co/FluidVoice-Labs/fluid-speech-pro-mlx) with clean mode on.
 
 ## Setup
 
@@ -72,14 +76,16 @@ You don't list misspellings. What the list can't fix is a term that sounds like 
 "quick", or "CORS" and "course".
 
 If a save can't be used (a line with no letters or digits, or a file that isn't UTF-8), the menu bar shows ⚠️ with
-the line number, and the previous list stays in effect until you fix it. Empty the file, or delete it, to turn the
+the line number, and the previous list stays in effect until you fix it or the helper restarts (after 30 minutes
+idle, **Restart Helper**, or a relaunch), which leaves no terms. Empty the file, or delete it, to turn the
 vocabulary off. To get the default list back, quit, delete the `TidyParrot` folder, and relaunch.
 Option-click the icon to see how many terms are loaded and when. The ⚠️ and these details update with your next
 dictation, not the moment you save: the helper reports them alongside each transcript.
 
 Measured with synthetic voices on held-out sentences, with an earlier 154-term list: exactly right terms went from 43% to
 76%, with no false hits on 30 trap sentences, and no added latency once the list is loaded. Expect lower numbers with
-a real voice and mic. The list builds in about a second after the model loads; dictation works without it meanwhile.
+a real voice and mic. The list builds in about a second after the model loads, including after an idle unload;
+dictation works without it meanwhile, so a dictation shorter than about 1.5 s right after a reload may miss it.
 
 ## How it works
 
@@ -101,7 +107,8 @@ fn tap  ─► resample to 16 kHz mono ─► helper over stdin ─► text over
   missed, since password fields hide key events from other apps.
 - `helper/`: `tidy_parrot_helper.py` loads the 8-bit model with clean mode once and warms it up, then answers one
   clip at a time over the protocol in `wire_protocol.py`. If the app quits or crashes, the helper's stdin closes and
-  it exits. `vendor/fluid_speech_mlx.py` is FluidVoice's loader from the model repo, unmodified. `vocabulary.py`
+  it exits. The app also stops it after 30 minutes idle and starts it again on the next tap; the clip from that tap
+  waits until the model is ready. `vendor/fluid_speech_mlx.py` is FluidVoice's loader from the model repo, unmodified. `vocabulary.py`
   reads and watches the vocabulary file, `boost_table.py` turns it into a per-token bonus table, `decoding.py` is the
   greedy decoder that applies it, and `snap.py` respells the result.
 

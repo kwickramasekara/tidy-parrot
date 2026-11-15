@@ -85,13 +85,18 @@ final class FakeEngine: TranscriptionEngine {
     private(set) var startCount = 0
     private(set) var stopCount = 0
     private(set) var received: [AudioClip] = []
+    /// Fails `start()` straight away, as when the helper can't be spawned.
+    var startFailure: String?
 
     func start() {
         startCount += 1
-        onStateChange?(.loading)
+        onStateChange?(startFailure.map { .failed($0) } ?? .loading)
     }
 
-    func stop() { stopCount += 1 }
+    func stop() {
+        stopCount += 1
+        onStateChange?(.unloaded)
+    }
 
     /// Holds each transcription until `releaseTranscription()`, to test what happens while one runs.
     var holdTranscription = false

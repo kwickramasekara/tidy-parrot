@@ -8,8 +8,11 @@ enum AppStatus: Equatable, Sendable {
     case listening
     case transcribing
     case loading
+    /// The model was unloaded after a while idle; the next tap loads it again while it records.
+    case unloaded
     case ready(cleanMode: Bool)
-    /// Ready, but the vocabulary file's latest save was rejected and the previous terms are still in use.
+    /// Ready, but the vocabulary file's latest save was rejected. The previous terms stay in use until the helper
+    /// restarts (an idle unload, Restart Helper or relaunch), which leaves none.
     case vocabularyProblem(String)
     case failed(String)
 
@@ -23,6 +26,7 @@ enum AppStatus: Equatable, Sendable {
         case .listening: (false, "Listening… tap \(hotkey.displayName) to insert, Esc to cancel")
         case .transcribing: (false, "Transcribing…")
         case .loading: (false, "Loading model…")
+        case .unloaded: (false, "Model unloaded to save memory: tap \(hotkey.displayName) to dictate")
         case .ready(let clean):
             (false, "Ready: tap \(hotkey.displayName) to dictate" + (clean ? " (clean mode)" : ""))
         case .vocabularyProblem(let problem): (true, "Vocabulary file not applied: \(problem)")

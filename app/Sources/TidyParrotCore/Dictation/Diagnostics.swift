@@ -24,6 +24,8 @@ struct Diagnostics: Equatable, Sendable {
         case .ready(_, let loadMilliseconds):
             lines.append("Helper: ready")
             lines.append("Model load: \(loadMilliseconds) ms")
+        case .unloaded:
+            lines.append("Helper: unloaded (loads when you dictate)")
         case .failed(let reason):
             // Repeats the status line on purpose: a missing Accessibility grant outranks it there.
             lines.append("Helper: failed (\(reason))")

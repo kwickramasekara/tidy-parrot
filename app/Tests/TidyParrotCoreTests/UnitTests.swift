@@ -213,6 +213,7 @@ struct AppStatusTests {
         (.listening, false),
         (.transcribing, false),
         (.loading, false),
+        (.unloaded, false),
         (.ready(cleanMode: true), false),
         (.ready(cleanMode: false), false),
         (.vocabularyProblem("line 3 has no letters or digits"), true),
@@ -277,6 +278,7 @@ struct DiagnosticsTests {
     /// Load time comes from the helper's ready message, so there's nothing to show before or without one.
     @Test(arguments: [
         (EngineState.loading, "Helper: loading model…"),
+        (.unloaded, "Helper: unloaded (loads when you dictate)"),
         (.failed("Helper stopped (status 1)"), "Helper: failed (Helper stopped (status 1))"),
     ])
     func notReadyShowsOnlyTheHelperState(engine: EngineState, helperLine: String) {
@@ -668,6 +670,7 @@ struct RecordingIndicatorTests {
         (.needsAccessibility, .hidden),
         (.transcribing, .hidden),
         (.loading, .hidden),
+        (.unloaded, .hidden),
         (.ready(cleanMode: true), .hidden),
         (.vocabularyProblem("line 3"), .hidden),
         (.failed("Helper stopped"), .hidden),

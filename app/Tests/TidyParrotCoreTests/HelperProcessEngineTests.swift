@@ -68,14 +68,43 @@ struct HelperProcessEngineTests {
         engine.stop()
     }
 
-    @Test func stopIsQuiet() async throws {
+    @Test func stopReportsUnloadedNotFailure() async throws {
         let engine = Self.engine(running: #"echo '{"ready": true}'; cat >/dev/null"#)
         #expect(await Self.firstSettledState(of: engine) == .ready(cleanMode: false, loadMilliseconds: 0))
         var later: [EngineState] = []
         engine.onStateChange = { later.append($0) }
         engine.stop()
         try await Task.sleep(for: .milliseconds(200))
-        #expect(later.isEmpty)  // a deliberate stop isn't reported as a failure
+        #expect(later == [.unloaded])  // the exit that follows isn't reported as a failure
+        await #expect(throws: TranscriptionError.notRunning) { try await engine.transcribe(AudioClip(samples: [])) }
+    }
+
+    /// The first dictation after an unload sends its clip while the model is still loading.
+    @Test func clipSentWhileLoadingWaitsForTheModel() async throws {
+        let engine = Self.engine(
+            running: #"""
+                sleep 0.3
+                echo '{"ready": true, "load_ms": 1, "clean_mode": true}'
+                head -c 4 >/dev/null
+                echo '{"text": "hi", "ms": 1}'
+                cat >/dev/null
+                """#)
+        var states: [EngineState] = []
+        engine.onStateChange = { states.append($0) }
+        engine.start()
+        #expect(try await engine.transcribe(AudioClip(samples: [])).text == "hi")
+        try await waitUntil { states.count == 2 }
+        #expect(states == [.loading, .ready(cleanMode: true, loadMilliseconds: 1)])
+        engine.stop()
+    }
+
+    /// A helper that dies before its ready line closes the pipe the queued clip is written to.
+    @Test func clipQueuedBehindAFailedLoadFailsAsNotRunning() async {
+        let engine = Self.engine(running: "sleep 0.2; exit 3")
+        engine.start()
+        await #expect(throws: TranscriptionError.notRunning) {
+            try await engine.transcribe(AudioClip(samples: [Float](repeating: 0, count: 16_000)))
+        }
     }
 
     /// `sh -c script` stands in for `python helper.py`, so no temp files are needed.

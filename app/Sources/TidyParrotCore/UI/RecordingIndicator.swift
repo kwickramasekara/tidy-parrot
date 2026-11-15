@@ -13,7 +13,8 @@ final class RecordingIndicator {
             switch status {
             case .starting: self = .starting
             case .listening: self = .listening
-            case .needsAccessibility, .transcribing, .loading, .ready, .vocabularyProblem, .failed: self = .hidden
+            case .needsAccessibility, .transcribing, .loading, .unloaded, .ready, .vocabularyProblem, .failed:
+                self = .hidden
             }
         }
     }

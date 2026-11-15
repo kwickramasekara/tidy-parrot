@@ -33,6 +33,13 @@ struct DictationControllerTests {
         return controller
     }
 
+    /// A ready controller whose engine has since been unloaded.
+    func makeUnloadedController(settings: DictationSettings = DictationSettings()) -> DictationController {
+        let controller = makeReadyController(settings: settings)
+        engine.emit(.unloaded)
+        return controller
+    }
+
     /// Taps to start, then waits for the mic to open.
     func tapToStart(_ controller: DictationController) async throws {
         hotkey.tap()
@@ -252,12 +259,15 @@ struct DictationControllerTests {
 
     // MARK: Refusals and failures
 
-    @Test func toggleBeforeEngineReadyAlertsAndDoesNotRecord() {
+    /// The clip waits in the engine until the model has loaded.
+    @Test func toggleWhileLoadingRecordsAndTranscribes() async throws {
         let controller = makeController()
         controller.start()
+        try await tapToStart(controller)
         hotkey.send(.toggle)
-        #expect(recorder.calls.isEmpty)
-        #expect(sounds.played == [.alert])
+        try await waitUntil { !inserter.inserted.isEmpty }
+        #expect(inserter.inserted == ["hello "])
+        #expect(engine.startCount == 1)  // already loading, so not started again
     }
 
     @Test func toggleWithoutFocusedInputPopsQuietlyAndDoesNotRecord() {
@@ -296,13 +306,15 @@ struct DictationControllerTests {
         #expect(sounds.played == [.recordingStarted, .recordingStopped])
     }
 
-    @Test func toggleBeforeEngineReadyAlertsWithoutCheckingFocus() {
+    @Test func toggleWhileFailedAlertsWithoutCheckingFocusAndDoesNotRecord() {
         focus.hasTextInput = false
-        let controller = makeController()
-        controller.start()
+        let controller = makeReadyController()
+        engine.emit(.failed("Helper stopped (status 1)"))
         hotkey.send(.toggle)
+        #expect(recorder.calls.isEmpty)
         #expect(sounds.played == [.alert])
         #expect(focus.checkCount == 0)
+        #expect(controller.status == .failed("Helper stopped (status 1)"))
     }
 
     @Test func toggleWithoutMicPermissionAlertsWithMessage() {
@@ -427,8 +439,9 @@ struct DictationControllerTests {
         case .cancel: hotkey.send(.cancel)
         case .stop: controller.stop()
         }
-        #expect(seen.count == 3)
-        #expect(seen.last != .listening)
+        // Quitting also stops the engine, which reports one more state.
+        #expect(seen.count == (end == .stop ? 4 : 3))
+        #expect(seen.dropFirst(2).allSatisfy { $0 != .listening })
     }
 
     @Test func stopClosesMicAndStopsEngine() async throws {
@@ -438,6 +451,155 @@ struct DictationControllerTests {
         #expect(!recorder.isOpen)
         #expect(engine.stopCount == 1)
         #expect(sounds.played == [.recordingStarted, .recordingStopped])
+    }
+
+    // MARK: Reloading an unloaded model
+
+    @Test func tapWhileUnloadedLoadsTheModelRecordsAndPastes() async throws {
+        let controller = makeUnloadedController()
+        engine.holdTranscription = true
+        try await tapToStart(controller)
+        #expect(engine.startCount == 2)
+        #expect(sounds.played == [.recordingStarted])
+        hotkey.send(.toggle)
+        try await waitUntil { engine.received.count == 1 }
+        // Sent while the model still loads: the engine holds it until then.
+        #expect(controller.diagnostics.engine == .loading)
+        #expect(controller.status == .transcribing)
+        engine.emit(.ready(cleanMode: true, loadMilliseconds: 1))
+        engine.releaseTranscription()
+        try await waitUntil { !inserter.inserted.isEmpty }
+        #expect(inserter.inserted == ["hello "])
+    }
+
+    /// fn key-down also starts shortcuts, so it opens only the mic; the tap loads the model.
+    @Test func pressWhileUnloadedWarmsOnlyTheMicAndItsTapLoads() async throws {
+        let controller = makeUnloadedController()
+        hotkey.send(.pressBegan)
+        hotkey.send(.pressAbandoned)
+        #expect(engine.startCount == 1)
+        hotkey.send(.pressBegan)
+        #expect(recorder.calls == [.warmUp, .cancel, .warmUp])
+        hotkey.send(.toggle)
+        try await waitUntil { controller.status == .listening }
+        #expect(engine.startCount == 2)
+    }
+
+    enum UnloadedRefusal: CaseIterable {
+        case noFocusedInput, microphoneOff
+    }
+
+    /// A tap that can't dictate doesn't load the model, with or without a warm-up first.
+    @Test(arguments: UnloadedRefusal.allCases, [false, true])
+    func refusedTapWhileUnloadedDoesntLoadTheModel(refusal: UnloadedRefusal, pressFirst: Bool) {
+        switch refusal {
+        case .noFocusedInput: focus.hasTextInput = false
+        case .microphoneOff: permissions.isMicrophoneAuthorized = false
+        }
+        let controller = makeUnloadedController()
+        if pressFirst { hotkey.send(.pressBegan) }
+        hotkey.send(.toggle)
+        #expect(engine.startCount == 1)
+        #expect(recorder.calls.isEmpty)
+        #expect(sounds.played == [refusal == .noFocusedInput ? .noFocusedInput : .alert])
+        #expect(controller.status == .unloaded)
+    }
+
+    /// e.g. the venv was removed while the app ran: nothing would transcribe the clip, so don't record it.
+    @Test(arguments: [false, true])
+    func reloadThatCantStartRefusesTheTap(pressFirst: Bool) async throws {
+        engine.startFailure = "Couldn't start helper"
+        let controller = makeUnloadedController()
+        if pressFirst { hotkey.send(.pressBegan) }
+        hotkey.send(.toggle)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(!recorder.calls.contains(.start))
+        #expect(!recorder.isOpen)
+        #expect(sounds.played == [.alert])
+        #expect(controller.status == .failed("Couldn't start helper"))
+    }
+
+    @Test func failedReloadDiscardsTheClipAndAlerts() async throws {
+        let controller = makeUnloadedController()
+        var messages: [String] = []
+        controller.onMessage = { messages.append($0) }
+        try await tapToStart(controller)
+        engine.emit(.failed("model not found"))
+        engine.result = .failure(TranscriptionError.notRunning)
+        await controller.finishRecording()?.value
+        #expect(inserter.inserted.isEmpty)
+        #expect(sounds.played == [.recordingStarted, .recordingStopped, .alert])
+        #expect(messages == ["Error: Transcription helper isn't running"])
+        #expect(controller.status == .failed("model not found"))
+    }
+
+    @Test func cancelDuringReloadDiscardsTheClipAndTheLoadCarriesOn() async throws {
+        let controller = makeUnloadedController()
+        try await tapToStart(controller)
+        hotkey.send(.cancel)
+        engine.emit(.ready(cleanMode: true, loadMilliseconds: 1))
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(engine.received.isEmpty)
+        #expect(engine.stopCount == 0)
+        #expect(controller.status == .ready(cleanMode: true))
+    }
+
+    // MARK: Unloading the model when idle
+
+    static let quickUnload = DictationSettings(idleUnloadDelay: .milliseconds(50))
+
+    @Test func unloadsTheModelAfterTheDelayWithNoDictation() async throws {
+        let controller = makeReadyController(settings: Self.quickUnload)
+        try await waitUntil { engine.stopCount == 1 }
+        #expect(controller.status == .unloaded)
+    }
+
+    enum Busy: CaseIterable {
+        case warming, recording, transcribing
+    }
+
+    /// The delay counts from the end of the last dictation, and nothing in progress is ever cut short.
+    @Test(arguments: Busy.allCases)
+    func neverUnloadsMidDictationAndUnloadsOnceItEnds(busy: Busy) async throws {
+        let controller = makeReadyController(settings: Self.quickUnload)
+        switch busy {
+        case .warming: hotkey.send(.pressBegan)
+        case .recording: try await tapToStart(controller)
+        case .transcribing:
+            engine.holdTranscription = true
+            try await tapToStart(controller)
+            hotkey.send(.toggle)
+            try await waitUntil { engine.received.count == 1 }
+        }
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(engine.stopCount == 0)
+
+        switch busy {
+        case .warming: hotkey.send(.pressAbandoned)
+        case .recording: hotkey.send(.toggle)
+        case .transcribing: engine.releaseTranscription()
+        }
+        try await waitUntil { engine.stopCount == 1 }
+        if busy != .warming { #expect(inserter.inserted == ["hello "]) }
+    }
+
+    /// Only a loaded model is unloaded: there's nothing to free while it loads, and a failure needs Restart Helper.
+    @Test(arguments: [EngineState.loading, .failed("Helper stopped (status 1)")])
+    func neverUnloadsAnEngineThatIsntReady(state: EngineState) async throws {
+        let controller = makeController(settings: Self.quickUnload)
+        controller.start()
+        engine.emit(state)
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(engine.stopCount == 0)
+    }
+
+    @Test func modelReloadedForACancelledDictationUnloadsAgain() async throws {
+        let controller = makeUnloadedController(settings: Self.quickUnload)
+        try await tapToStart(controller)
+        hotkey.send(.cancel)
+        engine.emit(.ready(cleanMode: true, loadMilliseconds: 1))
+        try await waitUntil { engine.stopCount == 1 }
+        #expect(controller.status == .unloaded)
     }
 
     // MARK: Warming the mic on fn key-down
@@ -485,7 +647,7 @@ struct DictationControllerTests {
     }
 
     enum PressRefusal: CaseIterable {
-        case engineLoading, noFocusedInput, microphoneOff
+        case engineFailed, noFocusedInput, microphoneOff
     }
 
     /// A press that its tap would refuse never opens the mic, stays quiet, and leaves the refusal to the tap.
@@ -493,9 +655,9 @@ struct DictationControllerTests {
     func refusedPressNeverOpensTheMicAndItsTapReportsIt(refusal: PressRefusal) {
         let controller: DictationController
         switch refusal {
-        case .engineLoading:
-            controller = makeController()
-            controller.start()
+        case .engineFailed:
+            controller = makeReadyController()
+            engine.emit(.failed("Helper stopped (status 1)"))
         case .noFocusedInput:
             focus.hasTextInput = false
             controller = makeReadyController()
@@ -516,7 +678,7 @@ struct DictationControllerTests {
         #expect(recorder.calls.isEmpty)
         #expect(!seen.contains(.starting))  // a refusal never shows the pill
         switch refusal {
-        case .engineLoading:
+        case .engineFailed:
             #expect(sounds.played == [.alert])
             #expect(focus.checkCount == 0)
         case .noFocusedInput:
@@ -620,7 +782,7 @@ struct DictationControllerTests {
         #expect(recorder.calls == [.start, .cancel])
         #expect(!recorder.isOpen)
         #expect(sounds.played.isEmpty)
-        #expect(seen == [.starting, .ready(cleanMode: true)])
+        #expect(seen == [.starting, .ready(cleanMode: true)] + (end == .stop ? [.unloaded] : []))
     }
 
     /// Events handled back to back, e.g. after a main-thread stall: each recorder call must take its turn in that
@@ -639,7 +801,7 @@ struct DictationControllerTests {
         #expect(recorder.calls == [.start, .cancel])
         #expect(!recorder.isOpen)
         #expect(sounds.played.isEmpty)
-        #expect(controller.status == .ready(cleanMode: true))
+        #expect(controller.status == (end == .stop ? .unloaded : .ready(cleanMode: true)))
     }
 
     /// The stopping tap, then a shortcut straight after: the shortcut's warm-up and discard must come after the stop,

@@ -1,6 +1,7 @@
 import Foundation
 
-/// Runs helper/tidy_parrot_helper.py, which keeps the model loaded, and talks to it over `HelperProtocol`.
+/// Runs helper/tidy_parrot_helper.py, which holds the model while it runs, and talks to it over `HelperProtocol`.
+/// A clip sent while it loads waits on `HelperConnection`'s queue behind the ready line.
 @MainActor
 final class HelperProcessEngine: TranscriptionEngine {
     struct Configuration: Sendable, Equatable {
@@ -57,6 +58,7 @@ final class HelperProcessEngine: TranscriptionEngine {
 
     func stop() {
         disconnect()
+        onStateChange?(.unloaded)
     }
 
     func transcribe(_ clip: AudioClip) async throws -> Transcript {
@@ -137,7 +139,9 @@ private final class HelperConnection: @unchecked Sendable {
         queue.async { [self] in
             completion(
                 Result {
-                    try input.write(contentsOf: frame)
+                    // A helper that died, while loading or since, has closed the pipe: that's "not running", not a
+                    // file error.
+                    do { try input.write(contentsOf: frame) } catch { throw TranscriptionError.notRunning }
                     guard let line = reader.readLine() else { throw TranscriptionError.notRunning }
                     guard let message = HelperProtocol.decode(line) else { throw TranscriptionError.invalidReply }
                     return message
