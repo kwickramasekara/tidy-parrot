@@ -107,6 +107,26 @@ struct HelperProcessEngineTests {
         }
     }
 
+    /// A second start replaces the running helper instead of leaving it running with no one to stop it.
+    @Test func startingAgainEndsTheRunningHelper() async throws {
+        let marker = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: marker) }
+        // Ignores SIGTERM, so it ends only when its stdin closes, and records that it did. $0 is the marker path.
+        let script = #"trap '' TERM; echo '{"ready": true}'; cat >/dev/null; echo ended >> "$0""#
+        let engine = HelperProcessEngine(
+            configuration: .init(python: "/bin/sh", script: "-c", arguments: [script, marker.path]))
+        #expect(await Self.firstSettledState(of: engine) == .ready(cleanMode: false, loadMilliseconds: 0))
+        var later: [EngineState] = []
+        engine.onStateChange = { later.append($0) }
+        engine.start()
+        try await waitUntil { FileManager.default.fileExists(atPath: marker.path) }
+        #expect(try String(contentsOf: marker, encoding: .utf8) == "ended\n")  // the first helper only
+        try await waitUntil { later.count == 2 }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(later == [.loading, .ready(cleanMode: false, loadMilliseconds: 0)])  // its exit isn't a failure
+        engine.stop()
+    }
+
     /// `sh -c script` stands in for `python helper.py`, so no temp files are needed.
     private static func engine(running script: String) -> HelperProcessEngine {
         HelperProcessEngine(configuration: .init(python: "/bin/sh", script: "-c", arguments: [script]))

@@ -22,6 +22,7 @@ final class HelperProcessEngine: TranscriptionEngine {
     }
 
     func start() {
+        disconnect()  // a running helper would otherwise be forgotten but keep its model loaded
         onStateChange?(.loading)
 
         let process = Process()
