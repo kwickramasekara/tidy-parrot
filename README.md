@@ -9,7 +9,7 @@ recording doesn't start. Apps that don't say what has focus, such as Slack or VS
 dictation went nowhere, click into the field and choose **Paste Last Dictation** from the menu. The last dictation
 is kept in memory only, until you quit.
 
-Tech terms come out spelled the way you write them ("ast-grep", "PostHog", "Next.js", "useEffect") because of a
+Tech terms come out spelled the way you write them ("Datadog", "PostHog", "Next.js", "useEffect") because of a
 vocabulary list. See [Vocabulary](#vocabulary).
 
 macOS also acts on a plain fn tap (emoji picker, input source or Apple Dictation), and Tidy Parrot can't block that.
@@ -58,7 +58,7 @@ To use a different certificate, such as an Apple Development one, run `make run 
 
 Choose **Edit Vocabulary** in the menu to open `~/Library/Application Support/TidyParrot/vocabulary.txt`. It holds
 one term per line, spelled and capitalised the way you want it typed. Lines starting with `#` are ignored. It starts
-with about 115 front-end terms (frameworks, build tools, React hooks, services). Save it and the change applies
+with about 75 front-end terms (frameworks, build tools, React hooks, services). Save it and the change applies
 within a few seconds, with no restart.
 
 The list is used in two ways:

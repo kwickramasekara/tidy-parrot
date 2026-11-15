@@ -8,11 +8,8 @@ Axios
 Babel
 Biome
 Bootstrap
-CLS
 CLI
-CORS
 Chromium
-Claude
 Claude Browser
 Claude Terminal
 Claude Code
@@ -21,86 +18,49 @@ Confluence
 Copilot
 Core Web Vitals
 Datadog
-Drizzle
-ESLint
-Electron
 Ember
 Emotion
-Expo
 Express
 Fallow
 Fastify
-Figma
-GitHub
-GraphQL
 Hono
 Husky
-INP
-JSX
-JWT
 JavaScript
 Jest
 Jira
-Jotai
-LCP
-LaunchDarkly
 Linear
-Lodash
 Netlify
 Next.js
-Node.js
-Nuxt
 Nx
 OAuth
 Playwright
 PostCSS
 PostHog
 Prettier
-Prisma
-Puppeteer
-Radix
-React
 React Native
 React Query
-React Testing Library
 Redux
-Rollup
-SSR
 SWC
 Sass
 Sentry
 Server Components
-Slack
 SolidJS
-Storybook
 Stripe
-Stylelint
 Supabase
-Svelte
 SvelteKit
-TSX
 Tailwind
 Tailwind CSS
 TanStack
 TanStack Query
-Tauri
-Three.js
 Turbopack
 Turborepo
-TypeScript
 Upstash
-VS Code
 Vercel
 Vite
 Vitest
 Vue
-WebAssembly
-WebSocket
-Webpack
 Yarn
-Zod
 Zustand
-ast-grep
 esbuild
 jQuery
 lint-staged
