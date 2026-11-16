@@ -159,7 +159,11 @@ final class RecordingIndicator {
         panel.level = .statusBar
         // Panels hide when their app deactivates by default, and this accessory app is never active.
         panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        // canJoinAllApplications lets the pill join another app's full-screen Space. Without it the pill sometimes
+        // stayed on the desktop while a full-screen app was in front.
+        panel.collectionBehavior = [
+            .canJoinAllSpaces, .canJoinAllApplications, .fullScreenAuxiliary, .stationary, .ignoresCycle,
+        ]
         return panel
     }
 }
