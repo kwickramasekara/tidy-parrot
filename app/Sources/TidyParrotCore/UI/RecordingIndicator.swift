@@ -31,7 +31,11 @@ final class RecordingIndicator {
     private let bars = LevelBarsView(barCount: barCount)
     private let time = NSTextField(labelWithString: elapsedText(.zero))
     private let spinner = NSProgressIndicator()
-    private lazy var panel = Self.makePanel(content: Self.makePill(bars: bars, time: time, spinner: spinner))
+    private lazy var pill = Self.makePill(bars: bars, time: time, spinner: spinner)
+    /// A new panel for every showing. macOS can pin a hidden all-Spaces panel to one desktop (reportedly when a
+    /// full-screen Space closes), and from then on it never shows over a full-screen app. Setting
+    /// `collectionBehavior` again doesn't undo that; a new panel joins every Space.
+    private var panel: NSPanel?
     private var startedAt = ContinuousClock.now
     private var mode = Mode.hidden
 
@@ -77,15 +81,18 @@ final class RecordingIndicator {
     /// Before the bars start, so their display link syncs to the screen the panel is on.
     private func orderFront() {
         guard let screen = Self.screenUnderPointer() else { return }
+        let panel = Self.makePanel(content: pill)
         panel.setFrame(Self.frame(in: screen.visibleFrame), display: true)
         // Not makeKeyAndOrderFront: that would make the panel key and take keyboard focus from the user's app.
         panel.orderFrontRegardless()
+        self.panel = panel
     }
 
     private func hide() {
         bars.stop()
         spinner.stopAnimation(nil)
-        panel.orderOut(nil)
+        panel?.orderOut(nil)
+        panel = nil
     }
 
     /// One bar step: refreshes the clock, which needs no finer resolution, and returns the next level.
@@ -159,11 +166,7 @@ final class RecordingIndicator {
         panel.level = .statusBar
         // Panels hide when their app deactivates by default, and this accessory app is never active.
         panel.hidesOnDeactivate = false
-        // canJoinAllApplications lets the pill join another app's full-screen Space. Without it the pill sometimes
-        // stayed on the desktop while a full-screen app was in front.
-        panel.collectionBehavior = [
-            .canJoinAllSpaces, .canJoinAllApplications, .fullScreenAuxiliary, .stationary, .ignoresCycle,
-        ]
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         return panel
     }
 }
