@@ -109,8 +109,8 @@ fn tap  ─► resample to 16 kHz mono ─► helper over stdin ─► text over
   sound, though macOS may briefly show its mic indicator. Bluetooth mics open only on the tap, because opening one
   switches the headset to its call profile. The unit opens only the mic, not the output device, and the chime waits
   for three buffers of real audio in a row, because AirPods send silence for about a second while their call link
-  comes up. Esc discards the recording, and the focused app still gets the Esc. Recordings stop after 3 minutes in case the stopping tap is
-  missed, since password fields hide key events from other apps.
+  comes up. Esc discards the recording, and the focused app still gets the Esc. Recordings stop after 5 minutes in
+  case the stopping tap is missed, since password fields hide key events from other apps.
 - `helper/`: `tidy_parrot_helper.py` loads the 8-bit model with clean mode once and warms it up, then answers one
   clip at a time over the protocol in `wire_protocol.py`. If the app quits or crashes, the helper's stdin closes and
   it exits. The app also stops it after 30 minutes idle and starts it again on the next tap; the clip from that tap
@@ -147,7 +147,9 @@ helper/.venv/bin/python helper/tidy_parrot_helper.py --file some.wav [--verbatim
 - Clean mode removes fillers and most repeats. In testing it dropped "um", "uh" and "I I" but kept
   "we should we should".
 - Paste uses key code 9 (V on QWERTY). Other keyboard layouts may need a different code.
-- Recordings stop at 3 minutes and aren't split into chunks. Untested past a minute or so.
+- Recordings stop at 5 minutes and aren't split into chunks. On an M4 Pro a 5-minute clip took about 3.4 s and the
+  helper's memory briefly peaked at about 8.7 GB (4.6 GB at 3 minutes), because the encoder attends over the whole
+  clip at once.
 - `parakeet-mlx` is pinned, because the vendored loader patches its internals, `decoding.py` copies its greedy loop,
   and `boost_table.py` relies on its booster's internal state.
 - The vocabulary is tested with about 150 terms. Much longer lists build more slowly and haven't been measured.

@@ -5,7 +5,7 @@ struct DictationSettings: Sendable {
     var minimumClipDuration: TimeInterval = 0.25
     /// Stops a recording that was left running or whose stopping tap was missed (a password field hides key events
     /// from global monitors), so the mic can't stay open indefinitely.
-    var maximumClipDuration: Duration = .seconds(180)
+    var maximumClipDuration: Duration = .seconds(300)
     /// Closes a mic opened on fn key-down if no tap follows: fn held on its own, or a key-up a password field hid.
     var warmUpLimit: Duration = .seconds(2)
     /// Fails a start whose mic sends no real audio in this long: a muted mic, or AirPods another device holds. AirPods

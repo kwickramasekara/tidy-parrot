@@ -123,8 +123,8 @@ final class RecordingIndicator {
         time.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
         time.textColor = .black
         time.alignment = .right
-        // Measured on "0:00": monospaced digits make every time up to "9:59" the same width, and recordings stop
-        // at 3 minutes.
+        // Measured on "0:00": monospaced digits make every time up to "9:59" the same width, and
+        // `DictationSettings.maximumClipDuration` stops recordings well before 10 minutes.
         let timeSize = time.fittingSize
         time.frame = NSRect(
             x: size.width - padding.right - timeSize.width, y: ((size.height - timeSize.height) / 2).rounded(),
